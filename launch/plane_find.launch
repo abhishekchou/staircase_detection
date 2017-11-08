@@ -1,0 +1,7 @@
+<launch>
+
+    <node pkg="staircase_detection" name="preprocess" type="preprocess" output="screen">
+        <rosparam file="$(find staircase_detection)/config/staircase_params.yaml"/>
+    </node>
+
+</launch>

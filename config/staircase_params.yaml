@@ -1,0 +1,4 @@
+input_cloud: "/map_nodelet/pointcloud"
+output_steps: "/staricase_detection/steps"
+delta_angle: 0.087
+
