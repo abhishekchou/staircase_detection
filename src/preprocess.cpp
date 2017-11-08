@@ -127,11 +127,11 @@ void preprocess::findHorizontalPlanes()
   seg.setInputCloud(raw_cloud);
   seg.segment(*inliers, *coefficients);
 
-  for (int i = 0; i < inliers->indices.size(); ++i)
+  for (size_t i = 0; i < inliers->indices.size(); ++i)
   {
     ROS_INFO("_staircase_detection_: Plane Equation: a%d + b%d+ c%d+ %d =0", coefficients->values[0],
-                                                                              coefficients->values[1]
-                                                                              coefficients->values[2]
+                                                                              coefficients->values[1],
+                                                                              coefficients->values[2],
                                                                               coefficients->values[3]);
   }
 
