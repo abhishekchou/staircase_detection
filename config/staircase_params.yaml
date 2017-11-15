@@ -1,4 +1,9 @@
-input_cloud: "/map_nodelet/pointcloud"
+input_cloud: "/mapping_nodelet/pointcloud"
 output_steps: "/staricase_detection/steps"
+output_walls: "/staircase_detection/walls"
+extract_bool: true
 delta_angle: 0.087
+z_passthrough: 0.002
+distance_threshold: 0.12
+cluster_tolerance: 0.1
 
