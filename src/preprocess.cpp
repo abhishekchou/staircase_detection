@@ -275,10 +275,11 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
 void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
 {
 
-  // Creating the KdTree object for the search method of the extraction
+  // Creating the KdTree object for the search method
   pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB>);
   tree->setInputCloud (cloud);
 
+  //Euclidean clustering to identify false postives
   std::vector<pcl::PointIndices> cluster_indices;
   pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
   ec.setClusterTolerance (cluster_tolerance); // 2cm
@@ -289,7 +290,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
   ec.extract (cluster_indices);
   ROS_WARN("cluster indices size %d", cluster_indices.size());
 
-
+  // Draw concave hull around the biggest plane found in the current scene
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr outliers (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_hull (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::ConcaveHull<pcl::PointXYZRGB> chull;
@@ -300,62 +301,47 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_cluster (new pcl::PointCloud<pcl::PointXYZRGB>);
     for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); ++pit)
     {
-      cloud_cluster->points.push_back (cloud->points[*pit]); //*
+      //copy clustered points into new pointcloud
+      cloud_cluster->points.push_back (cloud->points[*pit]);
     }
+
+    //createing concave hull around cluster
+    std::vector<pcl::Vertices> vertices;
     chull.setInputCloud (cloud_cluster);
     chull.setAlpha(0.1);
-    std::vector<pcl::Vertices> vertices;
 //    chull.performReconstruction(*cloud_hull, vertices);
-//    for(std::vector<pcl::Vertices>::const_iterator vit = vertices.begin(); vit != vertices.end() ; ++vit)
-//    {
-//      ROS_WARN("vertices %f", cloud_cluster->points[vit]);
-//    }
     chull.reconstruct (*cloud_hull);
 //    chull.setComputeAreaVolume(true);
 //    double hull_area = chull.getTotalArea();
 //    bool Step = checkStep(cloud_hull, hull_area);
     pcl_pub.publish(cloud_hull);
 
-    if(cloud_hull->isOrganized()) ROS_WARN("HULL IS ORGANIZED");
-    ROS_WARN("CLOUD HULL PARAMS-- height:%d width:%d", cloud_hull->height, cloud_hull->width);
-    ROS_WARN("cluster individual size %d", cloud_hull->points.size());
+    if(verbose)
+    {
+      if(cloud_hull->isOrganized()) ROS_WARN("HULL IS ORGANIZED");
+      ROS_WARN("CLOUD HULL PARAMS-- height:%d width:%d", cloud_hull->height, cloud_hull->width);
+      ROS_WARN("cluster individual size %d", cloud_hull->points.size());
+    }
 
-    outliers->operator +=(*cloud_cluster);
+    //Area of hull formed
+    double area = 0;
+    if(checkStep(cloud_cluster, area))
+    {
+       outliers->operator +=(*cloud_cluster);
+    }
     cloud_cluster->width = cloud_cluster->points.size ();
     cloud_cluster->height = 1;
     cloud_cluster->is_dense = true;
     j++;
   }
 
-  //TODO:: Sort the indices and check from biggest to smallest to save time
-
-
-  //  int biggest_cluster = distance(cluster_indices.begin(), max_element(cluster_indices.begin(), A + cluster_indices.size()));
-
-
-//  for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin (); it != cluster_indices.end (); ++it)
-//  {
-
-//    for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); ++pit)
-//    {
-//    }
-//  }
-
 
   outliers->header.frame_id = raw_cloud->header.frame_id;
-  ROS_WARN("cluster size %d", outliers->points.size());
 //  pcl_pub.publish(*outliers);
+  ROS_WARN("cluster size %d", outliers->points.size());
   ROS_WARN("sleeping for 5 seconds now..yawwnnn");
   ros::Duration(5).sleep();
   return;
-
-  //Transform from Pointcloud into CV MAT
-
-  //Do Connected Component
-
-  //Remove outside convex hull
-
-  //return
 }
 
 void preprocess::view_cloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
@@ -414,7 +400,7 @@ void preprocess::findHorizontalPlanes()
 //  float resolution = computeCloudResolution(raw_cloud);
 //  if(debug)ROS_WARN("Cloud Resolution: %f", resolution);
 
-  //Segment plane perpendicular to Z axis
+  //Segmentation parameters for planes
 //  seg.setOptimizeCoefficients(true);
   seg.setModelType(pcl::SACMODEL_PERPENDICULAR_PLANE);
   seg.setMethodType(pcl::SAC_RANSAC);
@@ -426,6 +412,7 @@ void preprocess::findHorizontalPlanes()
   int points_num = (int)raw_cloud->points.size();
   if(verbose) ROS_WARN("Staircase: Initial Cloud Size= %d", points_num);
 
+  //Segmentation and plane extraction
   while(raw_cloud->points.size() > 0.01*points_num)
   {
     temp_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -438,18 +425,25 @@ void preprocess::findHorizontalPlanes()
     if(verbose) ROS_WARN("Staircase: Segmented Plane - Inliers size =%d", (int) inliers->indices.size());
     if(inliers->indices.size() ==0)
     {
-      if(verbose) ROS_ERROR("STAITCASE_DETECTION :No inliers, could not find a plane perpendicular to Z-axis");
+      ROS_ERROR("STAITCASE_DETECTION :No inliers, could not find a plane perpendicular to Z-axis");
       break;
     }
 
-    //All points found on plane
+    //Extract all points on the found plane (setNegative false)
     extract.setInputCloud(raw_cloud);
     extract.setIndices(inliers);
     extract.setNegative(!extract_bool);
     extract.filter(*temp_cloud);
     size_t temp_size = temp_cloud->points.size();
-    if(temp_size <300000 && temp_size>1000) step_cloud->operator+=(*temp_cloud);
+
+    //If plane is too big = floor/drivable, if plane too small = outlier
+    if(temp_size <300000 && temp_size>1000)
+    {
+      step_cloud->operator+=(*temp_cloud);
+    }
+
     if(verbose) ROS_WARN("Staircase: Step Cloud Size = %d", step_cloud->points.size());
+
 //    if(step_cloud->points.size() >0)
 //      removeOutliers(step_cloud);
 
