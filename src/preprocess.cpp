@@ -1,6 +1,6 @@
 // Preprocess the velodyne pointcloud
 // Author: Abhishek Choudhary <acho@kth.se>
- 
+
 //_____ROS HEADERS____//
 #include <ros/ros.h>
 #include <std_msgs/String.h>
@@ -297,6 +297,8 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr outliers (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_hull (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::ConcaveHull<pcl::PointXYZRGB> chull;
+	//Convex Hull
+	pcl::ConvexHull<pcl::PointXYZRGB> cx_hull;
 
   int j = 0;
   for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin (); it != cluster_indices.end (); ++it)
@@ -312,12 +314,16 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
     std::vector<pcl::Vertices> vertices;
     chull.setInputCloud (cloud_cluster);
     chull.setAlpha(0.1);
-//    chull.performReconstruction(*cloud_hull, vertices);
     chull.reconstruct (*cloud_hull);
-//    chull.setComputeAreaVolume(true);
-//    double hull_area = chull.getTotalArea();
-//    bool Step = checkStep(cloud_hull, hull_area);
-    pcl_pub.publish(cloud_hull);
+		pcl_pub.publish(cloud_hull);
+		
+		//creating convex hull around the cluster
+		std::vector<pcl::Vertices> cx_vertices;
+		cx_hull.setInputCloud(cloud_cluster);
+		cx_hull.setComputeAreaVolume(true);
+		cx_hull.reconstruct(*cloud_hull,);
+		
+		
 
     if(verbose)
     {
