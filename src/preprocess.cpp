@@ -1,4 +1,5 @@
-// Preprocess the velodyne pointcloud
+// Staircase detection module for Centauro Project.
+// Using pointcloud data from a velodyne lidar
 // Author: Abhishek Choudhary <acho@kth.se>
 
 //_____ROS HEADERS____//
@@ -78,8 +79,8 @@ public:
   ros::Subscriber pcl_sub;
   ros::Publisher pcl_pub, wall_pub;
  
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr raw_cloud;
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
+	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
+	pcl::PointCloud<pcl::PointXYZRGB>::Ptr raw_cloud;
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr step_cloud;
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr temp_cloud;
  
@@ -134,7 +135,11 @@ preprocess::preprocess() : nh_private("~")
  
 preprocess::~preprocess()
 {}
- 
+
+/*
+ @brief: Callback function for laser data
+ @param: sensor_msgs::PointCloud2
+ */
 void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
 {
   if(verbose)
@@ -145,7 +150,15 @@ void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
   raw_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::fromROSMsg(*msg, *raw_cloud);
   preprocess_scene(raw_cloud);
+	//f new scene, will contain walls
+	wall_removed = false;
 }
+
+//TODO change to function call by ref
+/*
+ @brief: Simple passthrough filter to test function operation on specific areas of the pointcloud map
+ @param: PointCloud constptr
+ */
 void preprocess::testing()
 {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered (new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -157,19 +170,21 @@ void preprocess::testing()
   pass.filter (*cloud_filtered);
   raw_cloud->swap(*cloud_filtered);
 }
+
+//TODO change to function call by reference
+/*
+ @brief: Compare surface normals with user-defined axis (z-axis), remove points from cloud that are
+			 not parallel. Filter out walls, steeps ramps etc from the scene.
+ @param: PointCloud constptr
+ */
 void preprocess::removeWalls()
 {
-  //Remove Walls
-  pcl::Normal _axis;
+	//Define Axis perpendicular to normals on walls/surfaces to filter out
+	pcl::Normal _axis;
   _axis.normal_x = 0;
   _axis.normal_y = 0;
   _axis.normal_z = 1;
-
-  //Set axis to compare surface normals to
   Eigen::Vector4f _ax = _axis.getNormalVector4fMap();
-
-  //Passthrough filter to test operation of functions in specific areas of the pointcloud map
-//  testing();
 
   //Estimate normals on all surfaces
   //TODO: Make faster by normal estimation only on RANSAC planes
@@ -184,12 +199,14 @@ void preprocess::removeWalls()
   size_t size = normals->points.size();
   pcl::PointCloud<pcl::PointXYZRGB>::iterator it = raw_cloud->begin();
   int count =0;
+	//iterate through all estimated normals
   for(size_t i=0; i< size ; ++i)
   {
     pcl::Normal norm = normals->points[i];
     Eigen::Vector4f norm_vec = norm.getNormalVector4fMap();
-    double angle = pcl::getAngle3D(_ax ,norm_vec);
-    if(angle > PI/4)
+    //angle between surface normals
+		double angle = pcl::getAngle3D(_ax ,norm_vec);
+    if(angle > PI/4) //more than 45deg angle made with z-axis, definitely not horizontal plane
     {
       raw_cloud->erase(it);
     }
@@ -199,6 +216,11 @@ void preprocess::removeWalls()
   wall_removed = true;
   return;
 }
+
+/*
+ @brief: Remove NANs followed by a Voxel Grid filter to reduce cloud size and resolution
+ @param: PointCloud constptr
+ */
 void preprocess::preprocess_scene(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr  &msg)
 {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -219,8 +241,12 @@ void preprocess::preprocess_scene(const pcl::PointCloud<pcl::PointXYZRGB>::Const
 
   findHorizontalPlanes();
 }
-//Codeblock taken from pcl tutorials-correspondence grouping
-//<http://pointclouds.org/documentation/tutorials/correspondence_grouping.php>
+
+/*
+ @brief: Codeblock taken from pcl tutorials-correspondence grouping.
+			 <http://pointclouds.org/documentation/tutorials/correspondence_grouping.php>
+ @param: PointCloud constptr
+ */
 double preprocess::computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
 {
   double res = 0.0;
@@ -251,14 +277,24 @@ double preprocess::computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRG
   }
   return res;
 }
+
 //TODO: Check if steps or false positive
-bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double area)
+/*
+ @brief: Given the dimensions of the horizontal plane, check if valid step in order to localise
+			 search to this area.
+ @param: Dimensions of the step
+ */
+bool preprocess::checkStep(double length, double area)
 {
-	//is shorter edge of the rectangle deep enough?
-	
+	//compute shorter edge of the step
 	//return true/false
 }
 
+/*
+ @brief: Given the convex hull around bottom step, compute the length and equation of the longest
+			 edge of the step.
+ @param: Vertices of the convex polygon, area od the polygon
+ */
 double preprocess::computeLength(std::vector<pcl::Vertices> vertices, double area)
 {
 	//draw bounding rectagle around convex hull
@@ -267,6 +303,12 @@ double preprocess::computeLength(std::vector<pcl::Vertices> vertices, double are
 	
 	//return longest edge
 }
+
+/*
+ @brief: Cluster segmented planes, draw convex hulls around the clusters and ignore planes that are
+			 not big/wide/deep enough to be stairs
+ @param: constptr to current pointloud
+ */
 void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
 {
 
@@ -326,7 +368,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
     //Area of hull formed
     double area = 0;
 		double length = computeLength(vertices,area);
-    if(checkStep(cloud_cluster, area))
+    if(checkStep(length, area))
     {
        outliers->operator +=(*cloud_cluster);
     }
@@ -344,6 +386,11 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
   ros::Duration(5).sleep();
   return;
 }
+
+/*
+ @brief: PCL Visualizer function to view pointcloud outside RVIZ
+ @param: constptr to pointloud
+ */
 void preprocess::view_cloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
 {
   pcl::visualization::PCLVisualizer viewer ("Output");
@@ -388,6 +435,11 @@ void preprocess::view_cloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &c
     ros::Duration(.01).sleep();
   }
 }
+
+/*
+ @brief: Main function doing all the fun stuff
+ @param:
+ */
 void preprocess::findHorizontalPlanes()
 {
   step_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
