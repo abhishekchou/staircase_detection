@@ -94,12 +94,13 @@ public:
  
   void velodyneCallback(const sensor_msgs::PointCloud2ConstPtr &msg);
   void preprocess_scene(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
-  double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
   void removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
   void findHorizontalPlanes();
   void removeWalls();
   void view_cloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
   bool checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double area);
+	double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
+	double computeLength(std::vector<pcl::Vertices> vertices, double area);
 
   void testing();
  
@@ -253,27 +254,18 @@ double preprocess::computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRG
 //TODO: Check if steps or false positive
 bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double area)
 {
-//  chull = cv::Mat(cloud->height, cloud->width);
-//  int i =0;
-//  for(pcl::PointCloud<pcl::PointXYZRGB>::const_iterator it = cloud->begin(); it!= cloud->end(); ++it )
-//  {
-//    chull.at<double>(i,i) = cloud->points.at(i).x;
-//    chull.at<double>(1,i) = cloud->points.at(i).y;
-//    chull.at<double>(2,i) = cloud->points.at(i).z;
-//    ++i;
-//  }
+	//is shorter edge of the rectangle deep enough?
+	
+	//return true/false
+}
 
-//  ROS_WARN("cv mat size %d", chull.size);
-//  if()
-//  {
-//    return true;
-//  }
-
-//  if()
-//  {
-//    return false;
-//  }
-
+double preprocess::computeLength(std::vector<pcl::Vertices> vertices, double area)
+{
+	//draw bounding rectagle around convex hull
+	
+	//find longest edge of the rentangle
+	
+	//return longest edge
 }
 void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
 {
@@ -311,17 +303,16 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
     }
 
     //createing concave hull around cluster
-    std::vector<pcl::Vertices> vertices;
     chull.setInputCloud (cloud_cluster);
     chull.setAlpha(0.1);
     chull.reconstruct (*cloud_hull);
 		pcl_pub.publish(cloud_hull);
 		
 		//creating convex hull around the cluster
-		std::vector<pcl::Vertices> cx_vertices;
+		std::vector<pcl::Vertices> vertices;
 		cx_hull.setInputCloud(cloud_cluster);
 		cx_hull.setComputeAreaVolume(true);
-		cx_hull.reconstruct(*cloud_hull,);
+		cx_hull.reconstruct(*cloud_hull,vertices);
 		
 		
 
@@ -334,6 +325,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
 
     //Area of hull formed
     double area = 0;
+		double length = computeLength(vertices,area);
     if(checkStep(cloud_cluster, area))
     {
        outliers->operator +=(*cloud_cluster);
