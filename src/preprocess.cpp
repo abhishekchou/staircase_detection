@@ -92,7 +92,7 @@ public:
   std::string output_steps;
   std::string output_walls;
  
-  void velodyneCallback(const sensor_msgs::PointCloud2ConstPtr &msg);
+  void laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg);
   void preprocess_scene(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
   void removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
   void findHorizontalPlanes();
@@ -125,7 +125,7 @@ preprocess::preprocess() : nh_private("~")
  
   pcl_sub = nh.subscribe<sensor_msgs::PointCloud2>(input_cloud,
                                                    1000,
-                                                   &preprocess::velodyneCallback,
+                                                   &preprocess::laserCallback,
                                                    this);
   pcl_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_steps, 1000);
   wall_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_walls, 1000);
@@ -135,7 +135,7 @@ preprocess::preprocess() : nh_private("~")
 preprocess::~preprocess()
 {}
  
-void preprocess::velodyneCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
+void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
 {
   if(verbose)
   {
