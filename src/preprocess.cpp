@@ -103,7 +103,7 @@ public:
 	double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
 	double computeLength(std::vector<pcl::Vertices> vertices, double area);
 
-  void testing();
+  void passThrough();
  
 private:
   ros::NodeHandle nh;
@@ -159,7 +159,7 @@ void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
  @brief: Simple passthrough filter to test function operation on specific areas of the pointcloud map
  @param: PointCloud constptr
  */
-void preprocess::testing()
+void preprocess::passThrough()
 {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::PassThrough<pcl::PointXYZRGB> pass;
