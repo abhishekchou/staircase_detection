@@ -99,7 +99,7 @@ public:
   void findHorizontalPlanes();
   void removeWalls();
   void view_cloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
-  bool checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double area);
+  bool checkStep(double length, double area);
 	double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
 	double computeLength(std::vector<pcl::Vertices> vertices, double area);
 
