@@ -62,12 +62,13 @@
 #include <algorithm>
 #include <vector>
 #include <cmath>
+#include <math.h>
 
 //typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
 //typedef pcl::PointCloud<pcl::PointXYZRGB> colouredCloud;
  
 //Bool Params
-bool verbose = true;
+bool verbose = false;
 bool debug = true;
 bool wall_removed = false;
  
@@ -109,7 +110,7 @@ public:
   bool checkLength(std::vector<double> vertices);
   double computeDistance(std::vector<double> a, std::vector<double> b);
 
-  void passThrough();
+  void passThrough(double z);
  
 private:
   ros::NodeHandle nh;
@@ -128,7 +129,7 @@ preprocess::preprocess() : nh_private("~")
   nh_private.param("delta_angle", delta_angle, 0.08);
   nh_private.param("cluster_tolerance", cluster_tolerance, 0.03);
   nh_private.param("z_passthrough", z_passthrough, 0.002);
-  nh_private.param("step_width", step_width, 2.0);
+  nh_private.param("step_width", step_width, 1.0);
   nh_private.param("step_depth", step_depth, 0.3);
 //  nh_private.param("distance_threshold", distance_threshold);
  
@@ -167,16 +168,16 @@ void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
  @brief: Simple passthrough filter to test function operation on specific areas of the pointcloud map
  @param: PointCloud constptr
  */
-void preprocess::passThrough()
+void preprocess::passThrough(double z)
 {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::PassThrough<pcl::PointXYZRGB> pass;
 
-  pass.setInputCloud (raw_cloud);
+  pass.setInputCloud (step_cloud);
   pass.setFilterFieldName ("z");
-  pass.setFilterLimits (1.0f,3.0f);
+  pass.setFilterLimits (z-0.1, z+0.1);
   pass.filter (*cloud_filtered);
-  raw_cloud->swap(*cloud_filtered);
+  step_cloud->swap(*cloud_filtered);
 }
 
 //TODO change to function call by reference
@@ -297,23 +298,19 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
 
 //  size_t hull_size = cloud->points.size();
   pcl::PointCloud<pcl::PointXYZRGB>::const_iterator it= cloud->begin();
-  double max_x = it->x, y_max_x= it->y;
-  double max_y = it->y, x_max_y= it->x;
-  double min_x = it->x, y_min_x= it->y;
-  double min_y = it->y, x_min_y= it->x;
+  double max_x = -50, y_max_x= -50;
+  double max_y = -50, x_max_y= -50;
+  double min_x = 50, y_min_x= 50;
+  double min_y = 50, x_min_y= 50;
 
-  ROS_ERROR("cluster size %d",cloud->width);
-  for(it; it != cloud->end(); it++)
-  {
-    ROS_WARN("x %f y %f", it->x, it->y);
-  }
+  if(verbose) ROS_ERROR("cluster size %d",cloud->width);
 
   for(it = cloud->begin(); it != cloud->end(); it++)
   {
-//    ROS_WARN("min_x, current x %f %f",min_x, it->x);
+//    ROS_INFO("min_x, current x %f %f",min_x, it->x);
     if(min_x > it->x)
     {
-//      ROS_WARN("min_x new %f",min_x);
+//      ROS_INFO("min_x new %f",min_x);
       min_x = it->x;
       y_min_x = it->y;
     }
@@ -327,7 +324,7 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
     }
   }
 
-  for(it; it != cloud->end(); it++)
+  for(it= cloud->begin(); it != cloud->end(); it++)
   {
     if(max_x < it->x)
     {
@@ -344,32 +341,9 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
     }
   }
 
-//  for(it; it != cloud->end(); ++it)
-//  {
-//    if(max_x <= it->x)
-//    {
-//      max_x = it->x;
-//      y_max_x = it->y;
-//    }
-//    else if(max_y <= it->y)
-//    {
-//      max_y = it->y;
-//      x_max_y = it->x;
-//    }
-//    else if(min_x >= it->x)
-//    {
-//      min_x = it->x;
-//      y_min_x = it->y;
-//    }
-//    else if(min_y >= it->y)
-//    {
-//      min_y = it->y;
-//      x_min_y = it->x;
-//    }
-//  }
 
-//  ROS_WARN("Min Pair (%f,%f)",min_x, min_y);
-//  ROS_WARN("Max Pair (%f,%f)",max_x, max_y);
+//  ROS_INFO("Min Pair (%f,%f)",min_x, min_y);
+//  ROS_INFO("Max Pair (%f,%f)",max_x, max_y);
 
   std::vector<double> coords;
   coords.push_back(min_x);
@@ -380,14 +354,18 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
   coords.push_back(y_max_x);
   coords.push_back(x_max_y);
   coords.push_back(max_y);
-//  ROS_WARN("Intended Coordinates of box (%f,%f)",coords[0],coords[1]);
-  ROS_WARN("Intended Coordinates(%f,%f)",min_x,y_min_x);
-//  ROS_WARN("Intended Coordinates of box (%f,%f)",coords[2],coords[3]);
-  ROS_WARN("Intended Coordinates(%f,%f)",x_min_y,min_y);
-//  ROS_WARN("Intended Coordinates of box (%f,%f)",coords[4],coords[5]);
-  ROS_WARN("Intended Coordinates(%f,%f)",max_x,y_max_x);
-//  ROS_WARN("Intended Coordinates of box (%f,%f)",coords[6],coords[7]);
-  ROS_WARN("Intended Coordinates(%f,%f)",x_max_y,max_y);
+  if(verbose)
+  {
+    //  ROS_INFO("Intended Coordinates of box (%f,%f)",coords[0],coords[1]);
+  ROS_INFO("Intended Coordinates(%f,%f)",min_x,y_min_x);
+//  ROS_INFO("Intended Coordinates of box (%f,%f)",coords[2],coords[3]);
+  ROS_INFO("Intended Coordinates(%f,%f)",x_min_y,min_y);
+//  ROS_INFO("Intended Coordinates of box (%f,%f)",coords[4],coords[5]);
+  ROS_INFO("Intended Coordinates(%f,%f)",max_x,y_max_x);
+//  ROS_INFO("Intended Coordinates of box (%f,%f)",coords[6],coords[7]);
+  ROS_INFO("Intended Coordinates(%f,%f)",x_max_y,max_y);
+
+  }
 
   bool length = checkLength(coords);
   return length;
@@ -418,7 +396,7 @@ double preprocess::computeDistance(std::vector<double> a, std::vector<double> b)
  */
 bool preprocess::checkLength(std::vector<double> vertices)
 {
-  double edge[3];
+  double edge[6];
   bool result = false;
 
   std::vector<double> coord_0;
@@ -437,14 +415,20 @@ bool preprocess::checkLength(std::vector<double> vertices)
   edge[0] = computeDistance(coord_0, coord_1);
   edge[1] = computeDistance(coord_0, coord_2);
   edge[2] = computeDistance(coord_0, coord_3);
+  edge[3] = computeDistance(coord_1, coord_2);
+  edge[4] = computeDistance(coord_1, coord_3);
+  edge[5] = computeDistance(coord_2, coord_3);
 
-  std::sort(edge, edge+3);
-  ROS_WARN("Coordinates of box (%f,%f)",coord_0[0],coord_0[1]);
-  ROS_WARN("Coordinates of box (%f,%f)",coord_1[0],coord_1[1]);
-  ROS_WARN("Coordinates of box (%f,%f)",coord_2[0],coord_2[1]);
-  ROS_WARN("Coordinates of box (%f,%f)",coord_3[0],coord_3[1]);
+  std::sort(edge, edge+6);
+  if(!verbose)
+  {
+    ROS_INFO("computed length of edge %f %f %f", edge[0], edge[1],edge[2]);
+    ROS_INFO("Coordinates of box (%f,%f)",coord_0[0],coord_0[1]);
+    ROS_INFO("Coordinates of box (%f,%f)",coord_1[0],coord_1[1]);
+    ROS_INFO("Coordinates of box (%f,%f)",coord_2[0],coord_2[1]);
+    ROS_INFO("Coordinates of box (%f,%f)",coord_3[0],coord_3[1]);
+  }
 
-  ROS_WARN("computed length of edge %f %f %f", edge[0], edge[1],edge[2]);
 
 //  double x_length = std::abs(vertices[0]-vertices[2]);
 //  double y_length = std::abs(vertices[1]-vertices[3]);
@@ -475,6 +459,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
   pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB>);
   tree->setInputCloud (cloud);
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr steps (new pcl::PointCloud<pcl::PointXYZRGB>);
+  steps->header.frame_id = raw_cloud->header.frame_id;
 
   //Euclidean clustering to identify false postives
   std::vector<pcl::PointIndices> cluster_indices;
@@ -485,21 +470,27 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
   ec.setSearchMethod (tree);
   ec.setInputCloud (cloud);
   ec.extract (cluster_indices);
-  ROS_WARN("cluster indices size %d", cluster_indices.size());
+  if(verbose) ROS_INFO("cluster indices size %d", cluster_indices.size());
 
   // Draw concave hull around the biggest plane found in the current scene
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr outliers (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_hull (new pcl::PointCloud<pcl::PointXYZRGB>);
+
   pcl::ConcaveHull<pcl::PointXYZRGB> chull;
-	//Convex Hull
-	pcl::ConvexHull<pcl::PointXYZRGB> cx_hull;
+  //Convex Hull
+  pcl::ConvexHull<pcl::PointXYZRGB> cx_hull;
 
   int j = 0;
+  int step_count=0;
+  std::vector<double> cluster_centers;
   if(cluster_indices.size() !=0)
   {
 
     for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin (); it != cluster_indices.end (); ++it)
     {
+      double avg_x, avg_y, avg_z;
+      double counter;
+
       pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_cluster (new pcl::PointCloud<pcl::PointXYZRGB>);
       for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); ++pit)
       {
@@ -521,34 +512,89 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
       //    pcl_pub.publish(cloud_hull);
       //    view_cloud(cloud_hull);
 
-      if(!verbose)
+      if(verbose)
       {
-        if(cloud_hull->isOrganized()) ROS_WARN("HULL IS ORGANIZED");
-        ROS_WARN("Cloud Hull Params-- height:%d width:%d", cloud_hull->height, cloud_hull->width);
-        ROS_WARN("Cluster Individual Points %d", cloud_hull->points.at(1) );
+        if(cloud_hull->isOrganized()) ROS_INFO("HULL IS ORGANIZED");
+        ROS_INFO("Cloud Hull Params-- height:%d width:%d", cloud_hull->height, cloud_hull->width);
+        ROS_INFO("Cluster Individual Points %d", cloud_hull->points.at(1) );
       }
 
 
       if(checkStep(cloud_hull))
       {
-        //      cloud->erase(cloud_cluster->begin(), cloud_cluster->end());
+        counter = 0;
+        avg_x =0, avg_y=0; avg_z =0;
+        //Compute mid point of the cluster
+        pcl::PointCloud<pcl::PointXYZRGB>::const_iterator pit;
+        for(pit = cloud_hull->begin(); pit != cloud_hull->end() ; ++pit)
+        {
+          avg_x += pit->x;
+          avg_y += pit->y;
+          avg_z += pit->z;
+//          ROS_WARN("cluster points (%f,%f,%f)", pit->x, pit->y, pit->z);
+
+          counter += 1;
+        }
+        avg_x = avg_x/counter;
+        avg_y = avg_y/counter;
+        avg_z = avg_z/counter;
+        if(verbose) ROS_WARN("average points (%f,%f,%f) count %f", avg_x, avg_y, avg_z, counter);
+
+
+        step_count++;
         steps->operator +=(*cloud_cluster);
+        cluster_centers.push_back(avg_x);
+        cluster_centers.push_back(avg_y);
+        cluster_centers.push_back(avg_z);
+
+        pcl::PointXYZRGB center;
+        center.x = avg_x;
+        center.y = avg_y;
+        center.z = avg_z;
+        center.r = 1.0;
+        center.b = 0.0;
+        center.g = 0.0;
+        cloud_hull->points.push_back(center);
+//        view_cloud(cloud_hull);
       }
       steps->width = steps->points.size ();
       steps->height = 1;
       steps->is_dense = true;
-      j++;
+//      view_cloud(steps);
+      pcl_pub.publish(steps);
+//      ros::Duration(5).sleep();
+
+      if(step_count == 2)
+      {
+        step_count = 0;
+        if(verbose) ROS_WARN("cluster centers (%f,%f,%f) (%f,%f,%f)",cluster_centers[0], cluster_centers[1],
+                                                   cluster_centers[2], cluster_centers[3],
+                                                   cluster_centers[4], cluster_centers[5]);
+        std::vector<double> a;
+        std::vector<double> b;
+        a.push_back(cluster_centers[0]);
+        a.push_back(cluster_centers[1]);
+        b.push_back(cluster_centers[3]);
+        b.push_back(cluster_centers[4]);
+
+        double dx = computeDistance(a,b);
+        double dz = abs(cluster_centers[2]-cluster_centers[5]);
+        //ROS_WARN("dx=%f dz=%f", dx, dz);
+
+        double gradient = std::atan (dz/dx) * 180 / PI;
+        if(gradient != 0.0) ROS_INFO("STAIR GRAIDENT IS %f", gradient);
+//        ros::Duration(2).sleep();
+
+      }
     }
-    steps->header.frame_id = raw_cloud->header.frame_id;
-    pcl_pub.publish(steps);
+
+
+    //  pcl_pub.publish(*outliers);
+    //  ROS_INFO("cluster size %d", outliers->points.size());
+    //  ROS_INFO("sleeping for 5 seconds now..yawwnnn");
+    //  ros::Duration(5).sleep();
+    return;
   }
-
-
-  //  pcl_pub.publish(*outliers);
-  //  ROS_WARN("cluster size %d", outliers->points.size());
-  //  ROS_WARN("sleeping for 5 seconds now..yawwnnn");
-  //  ros::Duration(5).sleep();
-  return;
 }
 
 /*
@@ -567,7 +613,7 @@ void preprocess::view_cloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &c
 //  for(size_t i = 0; i < cloud->points.size(); ++i)
 //  {
 
-//    ROS_WARN("Passes this-- %f", msg->points[i].x);
+//    ROS_INFO("Passes this-- %f", msg->points[i].x);
 //    cloud->points.push_back(msg->points[i].x);
 //    cloud->points.push_back(msg->points[i].y);
 //    cloud->points.push_back(msg->points[i].z);
@@ -614,7 +660,7 @@ void preprocess::findHorizontalPlanes()
 
   //Get cloud resolution to set RANSAC parameters
 //  float resolution = computeCloudResolution(raw_cloud);
-//  if(debug)ROS_WARN("Cloud Resolution: %f", resolution);
+//  if(debug)ROS_INFO("Cloud Resolution: %f", resolution);
 
   //Segmentation parameters for planes
 //  seg.setOptimizeCoefficients(true);
@@ -625,8 +671,13 @@ void preprocess::findHorizontalPlanes()
   seg.setEpsAngle(delta_angle/2);
   seg.setDistanceThreshold(0.04);
 
+//  if(!wall_removed)
+//  {
+//    removeWalls();
+//  }
+
   int points_num = (int)raw_cloud->points.size();
-  if(verbose) ROS_WARN("Staircase: Initial Cloud Size= %d", points_num);
+  if(verbose) ROS_INFO("Staircase: Initial Cloud Size= %d", points_num);
 
   //Segmentation and plane extraction
   while(raw_cloud->points.size() > 0.01*points_num)
@@ -638,7 +689,7 @@ void preprocess::findHorizontalPlanes()
 
     seg.setInputCloud(raw_cloud);
     seg.segment(*inliers, *coefficients);
-    if(verbose) ROS_WARN("Staircase: Segmented Plane - Inliers size =%d", (int) inliers->indices.size());
+    if(verbose) ROS_INFO("Staircase: Segmented Plane - Inliers size =%d", (int) inliers->indices.size());
     if(inliers->indices.size() ==0)
     {
       ROS_ERROR("STAITCASE_DETECTION :No inliers, could not find a plane perpendicular to Z-axis");
@@ -653,21 +704,33 @@ void preprocess::findHorizontalPlanes()
     size_t temp_size = temp_cloud->points.size();
 
     //If plane is too big -> floor/drivable, if plane too small -> outlier
-    if(temp_size <300000 && temp_size>1000)
+    if(temp_size <100000 && temp_size>100)
     {
       step_cloud->operator+=(*temp_cloud);
     }
 
-    if(verbose) ROS_WARN("Staircase: Step Cloud Size = %d", step_cloud->points.size());
+    if(verbose) ROS_INFO("Staircase: Step Cloud Size = %d", step_cloud->points.size());
 //    if(step_cloud->points.size() >0)
 //      removeOutliers(step_cloud);
 
+
+//    ROS_ERROR("Plane Coeff a=%f b=%f c=%f d=%f", coefficients->values[0],coefficients->values[1],coefficients->values[2],coefficients->values[3] );
+
+    double counter = 0;
+    double avg_z =0;
+    pcl::PointCloud<pcl::PointXYZRGB>::const_iterator pit;
+    for(pit = step_cloud->begin(); pit != step_cloud->end() ; ++pit)
+    {
+      avg_z += pit->z;
+      counter += 1;
+    }
+    avg_z = avg_z / counter;
+//    ROS_ERROR("Z average =%f",avg_z);
+
+//    passThrough(avg_z);
     removeOutliers(step_cloud);
 //    pcl_pub.publish(*step_cloud);
 //    view_cloud(raw_cloud);
-
-//    ROS_WARN("sleeping for 5 seconds now..yawwnnn");
-//    ros::Duration(1).sleep();
 
     //All points except those in the found plane
     temp_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -677,11 +740,8 @@ void preprocess::findHorizontalPlanes()
     extract.setNegative(extract_bool);
     extract.filter(*temp_cloud);
     raw_cloud->swap(*temp_cloud);
-    if(verbose) ROS_WARN("Staircase: Raw Cloud Size = %d Temp Cloud Size = %d", raw_cloud->points.size(), temp_cloud->points.size());
-    if(!wall_removed)
-    {
-      removeWalls();
-    }
+    if(verbose) ROS_INFO("Staircase: Raw Cloud Size = %d Temp Cloud Size = %d", raw_cloud->points.size(), temp_cloud->points.size());
+
 
   }
 //  pcl_pub.publish(*raw_cloud);
