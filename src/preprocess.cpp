@@ -297,18 +297,18 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
 
 //  size_t hull_size = cloud->points.size();
   pcl::PointCloud<pcl::PointXYZRGB>::const_iterator it= cloud->begin();
-  double max_x = cloud->points[0].x, y_max_x= cloud->points[0].y;
-  double max_y = cloud->points[0].y, x_max_y= cloud->points[0].x;
-  double min_x = cloud->points[0].x, y_min_x= cloud->points[0].y;
-  double min_y = cloud->points[0].y, x_min_y= cloud->points[0].x;
+  double max_x = it->x, y_max_x= it->y;
+  double max_y = it->y, x_max_y= it->x;
+  double min_x = it->x, y_min_x= it->y;
+  double min_y = it->y, x_min_y= it->x;
 
   ROS_ERROR("cluster size %d",cloud->width);
-  for(it; it != cloud->end(); ++it)
+  for(it; it != cloud->end(); it++)
   {
     ROS_WARN("x %f y %f", it->x, it->y);
   }
 
-  for(it = cloud->begin(); it != cloud->end(); ++it)
+  for(it = cloud->begin(); it != cloud->end(); it++)
   {
 //    ROS_WARN("min_x, current x %f %f",min_x, it->x);
     if(min_x > it->x)
@@ -318,26 +318,26 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
       y_min_x = it->y;
     }
   }
-  for(it = cloud->begin(); it != cloud->end(); ++it)
+  for(it = cloud->begin(); it != cloud->end(); it++)
   {
-    if(min_y <= it->y)
+    if(min_y > it->y)
     {
       min_y = it->y;
       x_min_y = it->x;
     }
   }
 
-  for(it; it != cloud->end(); ++it)
+  for(it; it != cloud->end(); it++)
   {
-    if(max_x <= it->x)
+    if(max_x < it->x)
     {
       max_x = it->x;
       y_max_x = it->y;
     }
   }
-  for(it = cloud->begin(); it != cloud->end(); ++it)
+  for(it = cloud->begin(); it != cloud->end(); it++)
   {
-    if(max_y <= it->y)
+    if(max_y < it->y)
     {
       max_y = it->y;
       x_max_y = it->x;
@@ -380,6 +380,14 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
   coords.push_back(y_max_x);
   coords.push_back(x_max_y);
   coords.push_back(max_y);
+//  ROS_WARN("Intended Coordinates of box (%f,%f)",coords[0],coords[1]);
+  ROS_WARN("Intended Coordinates(%f,%f)",min_x,y_min_x);
+//  ROS_WARN("Intended Coordinates of box (%f,%f)",coords[2],coords[3]);
+  ROS_WARN("Intended Coordinates(%f,%f)",x_min_y,min_y);
+//  ROS_WARN("Intended Coordinates of box (%f,%f)",coords[4],coords[5]);
+  ROS_WARN("Intended Coordinates(%f,%f)",max_x,y_max_x);
+//  ROS_WARN("Intended Coordinates of box (%f,%f)",coords[6],coords[7]);
+  ROS_WARN("Intended Coordinates(%f,%f)",x_max_y,max_y);
 
   bool length = checkLength(coords);
   return length;
@@ -388,6 +396,10 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
 	//return true/false
 }
 
+/*
+ @brief:
+ @param:
+ */
 double preprocess::computeDistance(std::vector<double> a, std::vector<double> b)
 {
   double x1,y1,x2,y2;
@@ -398,6 +410,7 @@ double preprocess::computeDistance(std::vector<double> a, std::vector<double> b)
   double length = std::sqrt (std::pow((x1-x2),2) + std::pow((y1-y2),2) );
   return length;
 }
+
 /*
  @brief: Given the convex hull around bottom step, compute the length and equation of the longest
 			 edge of the step.
@@ -447,9 +460,6 @@ bool preprocess::checkLength(std::vector<double> vertices)
 
   if(result == false)
     ROS_ERROR("Not an okay step!");
-
-//  ROS_WARN("x_length = %f", edge[0]);
-//  ROS_WARN("y_length = %f", edge[1]);
   return result;
 }
 
@@ -530,7 +540,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
       j++;
     }
     steps->header.frame_id = raw_cloud->header.frame_id;
-    view_cloud(steps);
+    pcl_pub.publish(steps);
   }
 
 
@@ -643,7 +653,7 @@ void preprocess::findHorizontalPlanes()
     size_t temp_size = temp_cloud->points.size();
 
     //If plane is too big -> floor/drivable, if plane too small -> outlier
-    if(temp_size <100000 && temp_size>1000)
+    if(temp_size <300000 && temp_size>1000)
     {
       step_cloud->operator+=(*temp_cloud);
     }
