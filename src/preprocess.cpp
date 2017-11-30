@@ -82,7 +82,7 @@ public:
   preprocess();
   ~preprocess();
   ros::Subscriber pcl_sub;
-  ros::Publisher pcl_pub, wall_pub;
+  ros::Publisher pcl_pub, box_pub;
  
 	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
 	pcl::PointCloud<pcl::PointXYZRGB>::Ptr raw_cloud;
@@ -97,7 +97,7 @@ public:
   double step_width, step_depth;
   std::string input_cloud;
   std::string output_steps;
-  std::string output_walls;
+  std::string step_bounding_box;
  
   void laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg);
   void preprocess_scene(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
@@ -123,7 +123,7 @@ preprocess::preprocess() : nh_private("~")
   //Load params form YAML input
   nh_private.getParam("input_cloud", input_cloud);
   nh_private.getParam("output_steps", output_steps);
-  nh_private.getParam("output_walls", output_walls);
+  nh_private.getParam("step_bounding_box", step_bounding_box);
   nh_private.getParam("extract_bool", extract_bool);
 
   nh_private.param("delta_angle", delta_angle, 0.08);
@@ -138,7 +138,7 @@ preprocess::preprocess() : nh_private("~")
                                                    &preprocess::laserCallback,
                                                    this);
   pcl_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_steps, 1000);
-  wall_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_walls, 1000);
+  box_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_bounding_box, 1000);
  
 }
  
@@ -452,6 +452,8 @@ bool preprocess::checkLength(std::vector<double> vertices)
 			 not big/wide/deep enough to be stairs
  @param: constptr to current pointloud
  */
+
+// TODO: Put gradient computation into its own function
 void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
 {
 
@@ -475,6 +477,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
   // Draw concave hull around the biggest plane found in the current scene
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr outliers (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_hull (new pcl::PointCloud<pcl::PointXYZRGB>);
+  cloud_hull->header.frame_id = steps->header.frame_id;
 
   pcl::ConcaveHull<pcl::PointXYZRGB> chull;
   //Convex Hull
@@ -492,9 +495,10 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
       double counter;
 
       pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_cluster (new pcl::PointCloud<pcl::PointXYZRGB>);
+      cloud_cluster->header.frame_id = raw_cloud->header.frame_id;
       for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); ++pit)
       {
-        //copy clustered points into new pointcloud
+        //cloud_hull clustered points into new pointcloud
         cloud_cluster->points.push_back (cloud->points[*pit]);
       }
 
@@ -511,13 +515,6 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
       cx_hull.reconstruct(*cloud_hull,polygon);
       //    pcl_pub.publish(cloud_hull);
       //    view_cloud(cloud_hull);
-
-      if(verbose)
-      {
-        if(cloud_hull->isOrganized()) ROS_INFO("HULL IS ORGANIZED");
-        ROS_INFO("Cloud Hull Params-- height:%d width:%d", cloud_hull->height, cloud_hull->width);
-        ROS_INFO("Cluster Individual Points %d", cloud_hull->points.at(1) );
-      }
 
 
       if(checkStep(cloud_hull))
@@ -554,8 +551,12 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
         center.r = 1.0;
         center.b = 0.0;
         center.g = 0.0;
-        cloud_hull->points.push_back(center);
+//        cloud_hull->points.push_back(center);
 //        view_cloud(cloud_hull);
+        cloud_hull->width = cloud_hull->points.size ();
+        cloud_hull->height = 1;
+        cloud_hull->is_dense = true;
+        box_pub.publish(cloud_hull);
       }
       steps->width = steps->points.size ();
       steps->height = 1;
@@ -638,12 +639,13 @@ void preprocess::view_cloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &c
   viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "Step Cloud");
   viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_COLOR,0,0,1.0, "Step Cloud");
   viewer.addCoordinateSystem (1.0);
+  viewer.spinOnce (100);
 
-  while (!viewer.wasStopped ())
-  {
-    viewer.spinOnce (100);
-    ros::Duration(.01).sleep();
-  }
+//  while (!viewer.wasStopped ())
+//  {
+//    viewer.spinOnce (100);
+//    ros::Duration(.01).sleep();
+//  }
 }
 
 /*
