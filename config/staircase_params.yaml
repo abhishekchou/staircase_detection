@@ -1,4 +1,4 @@
-input_cloud: "/mapping_nodelet/pointcloud"
+input_cloud: "/map_nodelet/pointcloud"
 output_steps: "/staricase_detection/steps"
 step_bounding_box: "/staricase_detection/bounding_box"
 extract_bool: true
