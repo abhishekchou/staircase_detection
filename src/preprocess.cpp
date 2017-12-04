@@ -20,6 +20,7 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl/io/io.h>
 #include <pcl/common/io.h>
+#include <pcl/common/centroid.h>
 
 #include <pcl/point_cloud.h>
 #include <pcl/features/normal_3d.h>
@@ -58,6 +59,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/highgui/highgui.hpp>
+#include <staircase_detection/centroid_list.h>
 
 #include <algorithm>
 #include <vector>
@@ -68,7 +70,6 @@
 //typedef pcl::PointCloud<pcl::PointXYZRGB> colouredCloud;
  
 //Bool Params
-bool verbose = false;
 bool debug = true;
 bool wall_removed = false;
  
@@ -83,6 +84,7 @@ public:
   ~preprocess();
   ros::Subscriber pcl_sub;
   ros::Publisher pcl_pub, box_pub;
+  ros::Publisher hypothesis_pub;
  
 	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
 	pcl::PointCloud<pcl::PointXYZRGB>::Ptr raw_cloud;
@@ -94,25 +96,33 @@ public:
   double z_passthrough;
   double distance_threshold;
   double cluster_tolerance;
-  bool extract_bool, valid_step;
   double step_width, step_depth;
   double step_count;
+  bool extract_bool, valid_step, verbose;
+
   std::string input_cloud;
   std::string output_steps;
+  std::string step_maybe;
   std::string step_bounding_box;
- 
-  void laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg);
+
+  std::vector<double> centroid_x;
+  std::vector<double> centroid_y;
+  std::vector<double> centroid_z;
+
   void preprocess_scene();
+  void removeWalls();
+  void passThrough(double z);
+  bool checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
+  void view_cloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
+  void laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg);
   void removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double height);
   void findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
-  void removeWalls();
-  void view_cloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
-  bool checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
-	double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
-  bool checkLength(std::vector<double> vertices);
-  double computeDistance(std::vector<double> a, std::vector<double> b);
 
-  void passThrough(double z);
+  bool checkLength(std::vector<double> vertices);
+  bool getStairParams(double height);
+
+  double computeDistance(std::vector<double> a, std::vector<double> b);
+  double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
  
 private:
   ros::NodeHandle nh;
@@ -125,8 +135,10 @@ preprocess::preprocess() : nh_private("~")
   //Load params form YAML input
   nh_private.getParam("input_cloud", input_cloud);
   nh_private.getParam("output_steps", output_steps);
+  nh_private.getParam("step_maybe", step_maybe);
   nh_private.getParam("step_bounding_box", step_bounding_box);
   nh_private.getParam("extract_bool", extract_bool);
+  nh_private.getParam("verbose", verbose);
 
   nh_private.param("delta_angle", delta_angle, 0.08);
   nh_private.param("cluster_tolerance", cluster_tolerance, 0.03);
@@ -141,6 +153,7 @@ preprocess::preprocess() : nh_private("~")
                                                    this);
   pcl_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_steps, 1000);
   box_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_bounding_box, 1000);
+  hypothesis_pub = nh.advertise<staircase_detection::centroid_list> (step_maybe, 1);
  
 }
  
@@ -281,7 +294,7 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
       step_cloud->operator+=(*temp_cloud);
     }
 
-    if(!verbose)
+    if(verbose)
       ROS_INFO("Staircase: Planes found at height = %f", height);
     pcl_pub.publish(step_cloud);
 
@@ -349,16 +362,31 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
 
       if(checkStep(cloud_hull))
       {
-        ROS_ERROR("Step found at height= %f", height);
+//        ROS_ERROR("Step found at height= %f", height);
         step_count ++;
         steps->operator +=(*cloud_cluster);
         box_pub.publish(steps);
-        passThrough(height);
-//        box_pub.publish(steps);
+//        ros::Duration(2).sleep();
+        Eigen::Vector4f centroid;
+        pcl::compute3DCentroid(*cloud_cluster, centroid);
+        centroid_x.push_back(centroid[0]);
+        centroid_y.push_back(centroid[1]);
+        centroid_z.push_back(centroid[2]);
+//        ROS_WARN("z centroid %f", centroid_z.back());
+
+        //assumption that there is only one staircase in the scene
+        //so there will be only valid step at a particular height
+        break;
       }
     }
-//    ros::Duration(5).sleep();
+    if(step_count >= 2)
+    {
+      bool eureka = getStairParams(height);
+//      if(eureka)
+//        box_pub.publish(steps);
+    }
   }
+  passThrough(height);
   return;
 }
 
@@ -514,8 +542,45 @@ bool preprocess::checkLength(std::vector<double> vertices)
   }
 
   if(result == false)
-//    ROS_ERROR("Not an okay step!");
+    ROS_ERROR("Not an okay step!");
   return result;
+}
+
+/*
+ @brief:
+ @param:
+*/
+bool preprocess::getStairParams(double height)
+{
+  std::vector<double> a, b;
+  a.push_back(centroid_x.at(0));
+  b.push_back(centroid_x.at(1));
+  a.push_back(centroid_y.at(0));
+  b.push_back(centroid_y.at(1));
+
+  geometry_msgs::Point centroid;
+  staircase_detection::centroid_list msg;
+  centroid.x = a[0]; centroid.y = a[1];
+  msg.centroids.push_back(centroid);
+  centroid.x = b[0]; centroid.y = b[1];
+  msg.centroids.push_back(centroid);
+
+  double w = computeDistance(a,b);
+  double h = std::abs(centroid_z[0] - centroid_z[1]);
+  //Check if step depth is greater than threshold and less than
+  //1m (becomes drivable) and height is less that 25cm and greater than
+  //5cm
+  if(w>=step_depth && w<=1.0 && h<= 0.25 && h>=0.05)
+  {
+    ROS_ERROR("EUREKA! %fcm behind and %fcm above", w*100, h*100);
+    return true;
+    hypothesis_pub.publish(msg);
+  }
+  else
+  {
+    ROS_ERROR("Something is not right :( w=%f h=%f",  w*100, h*100);
+    return false;
+  }
 }
 
 //TODO change to function call by reference
