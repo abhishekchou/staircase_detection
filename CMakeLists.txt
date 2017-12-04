@@ -12,28 +12,28 @@ find_package(catkin REQUIRED COMPONENTS
   image_transport
   OpenCV
   PCL REQUIRED
+  message_generation
 )
 
-###################################
-## catkin specific configuration ##
-###################################
-## The catkin_package macro generates cmake config files for your package
-## Declare things to be passed to dependent projects
-## INCLUDE_DIRS: uncomment this if you package contains header files
-## LIBRARIES: libraries you create in this project that dependent projects also need
-## CATKIN_DEPENDS: catkin_packages dependent projects also need
-## DEPENDS: system dependencies of this project that dependent projects also need
+add_message_files(
+	FILES
+	centroid_list.msg
+)
+
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+  geometry_msgs
+)
+
 catkin_package(
+  
 #  INCLUDE_DIRS include
-#  LIBRARIES snoopy_vision
-#  CATKIN_DEPENDS roscpp rospy std_msgs
+#  LIBRARIES 
+  CATKIN_DEPENDS message_runtime
 #  DEPENDS system_lib
 )
 
-
-## Specify additional locations of header files
-## Your package locations should be listed before other locations
-# include_directories(include)
 include_directories(
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
@@ -44,7 +44,6 @@ include_directories(
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
 
-add_executable(preprocess src/preprocess.cpp)
-#add_executable(preprocessv2 src/preprocessv2.cpp)
-target_link_libraries(preprocess  ${catkin_LIBRARIES})
-add_dependencies(preprocess  staircase_detection)
+add_executable(staircare_detection src/preprocess.cpp)
+target_link_libraries(staircare_detection  ${catkin_LIBRARIES})
+add_dependencies(staircare_detection  staircase_detection)
