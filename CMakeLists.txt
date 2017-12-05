@@ -44,6 +44,7 @@ include_directories(
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
 
-add_executable(staircare_detection src/preprocess.cpp)
-target_link_libraries(staircare_detection  ${catkin_LIBRARIES})
-add_dependencies(staircare_detection  staircase_detection)
+add_executable(preprocess src/preprocess.cpp)
+#add_executable(validate_steps src/validate_steps.cpp)
+target_link_libraries(preprocess  ${catkin_LIBRARIES})
+add_dependencies(preprocess staircase_detection)

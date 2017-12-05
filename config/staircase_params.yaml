@@ -1,7 +1,8 @@
-input_cloud: "/map_nodelet/pointcloud"
+input_cloud: "/mapping_nodelet/pointcloud"
 step_maybe: "/staircase_detection/steps_centroid"
 output_steps: "/staircase_detection/pointcloud/steps"
 step_bounding_box: "/staircase_detection/pointcloud/bounding_box"
+step_vertical: "/staircase_detection/pointcloud/step_vertical"
 extract_bool: true
 verbose: false
 delta_angle: 0.087
