@@ -85,6 +85,7 @@ public:
   ros::Subscriber pcl_sub;
   ros::Publisher pcl_pub, box_pub;
   ros::Publisher hypothesis_pub;
+  ros::Publisher vertical_step_pub;
  
 	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
 	pcl::PointCloud<pcl::PointXYZRGB>::Ptr raw_cloud;
@@ -104,23 +105,26 @@ public:
   std::string output_steps;
   std::string step_maybe;
   std::string step_bounding_box;
+  std::string step_vertical;
 
   std::vector<double> centroid_x;
   std::vector<double> centroid_y;
   std::vector<double> centroid_z;
 
-  void preprocess_scene();
+  void preprocessScene();
   void removeWalls();
   void passThrough(double z);
-  bool checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
-  void view_cloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
+  void viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
   void laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg);
   void removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double height);
   void findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
 
   bool checkLength(std::vector<double> vertices);
   bool getStairParams(double height);
+  bool checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
+  bool validateSteps(const staircase_detection::centroid_list msg);
 
+  double computeAngle(geometry_msgs::Point a, geometry_msgs::Point b);
   double computeDistance(std::vector<double> a, std::vector<double> b);
   double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
  
@@ -137,6 +141,7 @@ preprocess::preprocess() : nh_private("~")
   nh_private.getParam("output_steps", output_steps);
   nh_private.getParam("step_maybe", step_maybe);
   nh_private.getParam("step_bounding_box", step_bounding_box);
+  nh_private.getParam("step_vertical", step_vertical);
   nh_private.getParam("extract_bool", extract_bool);
   nh_private.getParam("verbose", verbose);
 
@@ -154,6 +159,7 @@ preprocess::preprocess() : nh_private("~")
   pcl_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_steps, 1000);
   box_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_bounding_box, 1000);
   hypothesis_pub = nh.advertise<staircase_detection::centroid_list> (step_maybe, 1);
+  vertical_step_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_vertical, 1000);
  
 }
  
@@ -174,7 +180,7 @@ void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
   raw_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::fromROSMsg(*msg, *raw_cloud);
   step_count = 0;
-  preprocess_scene();
+  preprocessScene();
   //if new scene, will contain walls
 	wall_removed = false;
 }
@@ -183,7 +189,7 @@ void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
  @brief: Remove NANs followed by a Voxel Grid filter to reduce cloud size and resolution
  @param: PointCloud constptr
  */
-void preprocess::preprocess_scene()
+void preprocess::preprocessScene()
 {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
   std::vector<int> indices;
@@ -296,7 +302,7 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
 
     if(verbose)
       ROS_INFO("Staircase: Planes found at height = %f", height);
-    pcl_pub.publish(step_cloud);
+//    pcl_pub.publish(step_cloud);
 
     if(step_cloud->points.size() !=0)
       removeOutliers(step_cloud, height);
@@ -537,18 +543,18 @@ bool preprocess::checkLength(std::vector<double> vertices)
     if(edge[0] >= step_depth && edge[2] >= step_width)
     {
       result = true;
-      ROS_ERROR("This is okay");
+//      ROS_ERROR("This is okay");
     }
   }
 
   if(result == false)
-    ROS_ERROR("Not an okay step!");
+//    ROS_ERROR("Not an okay step!");
   return result;
 }
 
 /*
- @brief:
- @param:
+ @brief: Check if centroids of bottom planes could be part of a staircase
+ @param: Height(double) of the planes
 */
 bool preprocess::getStairParams(double height)
 {
@@ -560,10 +566,12 @@ bool preprocess::getStairParams(double height)
 
   geometry_msgs::Point centroid;
   staircase_detection::centroid_list msg;
-  centroid.x = a[0]; centroid.y = a[1];
+  centroid.x = a[0]; centroid.y = a[1]; centroid.z = centroid_z[0];
   msg.centroids.push_back(centroid);
-  centroid.x = b[0]; centroid.y = b[1];
+//  ROS_WARN("Centroid --1 x=%f y=%f z=%f", centroid.x, centroid.y, centroid.z);
+  centroid.x = b[0]; centroid.y = b[1]; centroid.z = centroid_z[1];
   msg.centroids.push_back(centroid);
+//  ROS_WARN("Centroid --2 x=%f y=%f z=%f", msg.centroids.at(0).x, centroid.y, centroid.z);
 
   double w = computeDistance(a,b);
   double h = std::abs(centroid_z[0] - centroid_z[1]);
@@ -572,15 +580,131 @@ bool preprocess::getStairParams(double height)
   //5cm
   if(w>=step_depth && w<=1.0 && h<= 0.25 && h>=0.05)
   {
-    ROS_ERROR("EUREKA! %fcm behind and %fcm above", w*100, h*100);
-    return true;
-    hypothesis_pub.publish(msg);
+    ROS_ERROR("Horizontal : %fcm behind and %fcm above", w*100, h*100);
+    return validateSteps(msg);
   }
   else
   {
-    ROS_ERROR("Something is not right :( w=%f h=%f",  w*100, h*100);
+//    ROS_ERROR("Something is not right :( w=%f h=%f",  w*100, h*100);
     return false;
   }
+}
+
+
+/*
+ @brief: check if vertical planes support the staircase hypothesis
+ @param: centroid of clusters from bottom steps
+ */
+bool preprocess::validateSteps(staircase_detection::centroid_list msg)
+{
+  geometry_msgs::Point a,b;
+  a = msg.centroids.at(0);
+  b = msg.centroids.at(1);
+  double theta = std::atan2((b.y-a.y),(b.x-a.x));
+//  ROS_WARN("Theta = %f",theta);
+  Eigen::Affine3f rotate_z = Eigen::Affine3f::Identity();
+  rotate_z.rotate (Eigen::AngleAxisf (theta, Eigen::Vector3f::UnitZ()));
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr aligned_cloud (new pcl::PointCloud<pcl::PointXYZRGB> ());
+  pcl::transformPointCloud (*raw_cloud, *aligned_cloud, rotate_z);
+
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr filtered_cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
+  pcl::PassThrough<pcl::PointXYZRGB> pass;
+  filtered_cloud->header.frame_id = raw_cloud->header.frame_id;
+
+  pass.setInputCloud (aligned_cloud);
+  pass.setFilterFieldName ("x");
+  if(a.x > b.x)
+    pass.setFilterLimits (b.x-0.5, b.x+5);
+  else
+    pass.setFilterLimits (a.x-0.5, a.x+5);
+  pass.filter (*filtered_cloud);
+
+  pass.setInputCloud (filtered_cloud);
+  pass.setFilterFieldName("y");
+  pass.setFilterLimits(a.y-1.0,a.y+1.0);
+  pass.filter (*filtered_cloud);
+
+  pass.setInputCloud (filtered_cloud);
+  pass.setFilterFieldName("z");
+  if(a.z > b.z)
+    pass.setFilterLimits(b.z, b.z+4.0);
+  else
+    pass.setFilterLimits(a.z, a.z+4.0);
+  pass.filter (*filtered_cloud);
+//  pcl_pub.publish(filtered_cloud);
+
+  pcl::SACSegmentation<pcl::PointXYZRGB> seg;
+  pcl::ExtractIndices<pcl::PointXYZRGB> extract;
+  std::vector<geometry_msgs::Point> c;
+
+  //Segmentation parameters for planes
+  seg.setModelType(pcl::SACMODEL_PARALLEL_PLANE);
+  seg.setMethodType(pcl::SAC_RANSAC);
+  seg.setMaxIterations(100000);
+  seg.setAxis(Eigen::Vector3f(0,0,1));
+  seg.setEpsAngle(delta_angle/2);
+  seg.setDistanceThreshold(0.04);
+
+  int points_num = (int)filtered_cloud->points.size();
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_step_cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
+  //Segmentation and plane extraction
+  while(filtered_cloud->points.size() > 0.01*points_num)
+  {
+    temp_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
+    vertical_step_cloud->header.frame_id = aligned_cloud->header.frame_id;
+
+    pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
+    pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
+
+    seg.setInputCloud(filtered_cloud);
+    seg.segment(*inliers, *coefficients);
+    if(verbose) ROS_INFO("Staircase: Segmented Plane - Inliers size =%d", (int) inliers->indices.size());
+    if(inliers->indices.size() ==0)
+    {
+      ROS_ERROR("STAITCASE_DETECTION :No inliers, could not find a plane parallel to Z-axis");
+      break;
+    }
+
+    //Extract all points on the found plane (setNegative to false)
+    extract.setInputCloud(filtered_cloud);
+    extract.setIndices(inliers);
+    extract.setNegative(!extract_bool);
+    extract.filter(*temp_cloud);
+    int temp_size = (int) temp_cloud->points.size();
+
+    Eigen::Vector4f centroid;
+    pcl::compute3DCentroid(*temp_cloud, centroid);
+    geometry_msgs::Point cent;
+    cent.x = centroid[0];
+    cent.y = centroid[1];
+    cent.z = centroid[2];
+    c.push_back(cent);
+
+    //If plane is too big -> floor/drivable, if plane too small -> outlier
+    if(temp_size>500)
+    {
+      vertical_step_cloud->operator+=(*temp_cloud);
+    }
+
+    //All points except those in the found plane
+    temp_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
+    extract.setInputCloud(filtered_cloud);
+    extract.setIndices(inliers);
+    extract.setNegative(extract_bool);
+    extract.filter(*temp_cloud);
+    filtered_cloud->swap(*temp_cloud);
+
+  }
+  vertical_step_pub.publish(vertical_step_cloud);
+  std::vector<double> p,q;
+  p.push_back(c.at(0).x);
+  p.push_back(c.at(0).y);
+  q.push_back(c.at(1).x);
+  q.push_back(c.at(1).y);
+  double w = computeDistance(p,q);
+  double h = std::abs(c.at(0).z - c.at(1).z);
+  ROS_ERROR("Vertical:: %f cm behind and %f above",w*100, h*100);
+  return true;
 }
 
 //TODO change to function call by reference
@@ -669,7 +793,7 @@ double preprocess::computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRG
  @brief: PCL Visualizer function to view pointcloud outside RVIZ
  @param: constptr to pointloud
  */
-void preprocess::view_cloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
+void preprocess::viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
 {
   pcl::visualization::PCLVisualizer viewer ("Output");
 //  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);

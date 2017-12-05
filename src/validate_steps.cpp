@@ -60,15 +60,24 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
+#include <staircase_detection/centroid_list.h>
+
 #include <algorithm>
 #include <vector>
 #include <cmath>
 #include <math.h>
 
 
-void stepHypothesis(const std_msgs::String::ConstPtr& msg)
+void centroidCallback(staircase_detection::centroid_list::ConstPtr &msg)
 {
-  ROS_INFO("I heard: [%s]", msg->data.c_str());
+
+  double theta = 0;
+  Eigen::Affine3f rotate_z = Eigen::Affine3f::Identity();
+  rotate_z.rotate (Eigen::AngleAxisf (theta, Eigen::Vector3f::UnitZ()));
+
+  // Executing the transformation
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr aligned_cloud (new pcl::PointCloud<pcl::PointXYZRGB> ());
+  pcl::transformPointCloud (*raw_cloud, *aligned_cloud, rotate_z);
 }
 
 int main(int argc, char **argv)
@@ -76,7 +85,7 @@ int main(int argc, char **argv)
   ros::init(argc, argv, "validate_steps");
   ros::NodeHandle nh;
 
-  ros::Subscriber sub = nh.subscribe("chatter", 1000, chatterCallback);
+  ros::Subscriber sub = nh.subscribe("staircase_detection/steps_centroid", 1000, centroidCallback);
 
   ros::spin();
 
