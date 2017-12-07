@@ -94,6 +94,8 @@ public:
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane_cloud;
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr step_cloud;
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr temp_cloud;
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr filtered_cloud;
+
  
   double delta_angle;
   double z_passthrough;
@@ -116,20 +118,25 @@ public:
 
   void preprocessScene();
   void removeWalls();
+
+  void removeTopStep(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud);
   void passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double z, bool horizontal);
+
   void viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
   void laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg);
   void removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double height);
   void findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
 
-  bool checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
   bool checkLength(std::vector<double> vertices);
-  bool validateSteps(const staircase_detection::centroid_list msg);
   bool getStairParams(double height);
   bool normalDotProduct(pcl::ModelCoefficients::Ptr &coefficients ,Eigen::Vector3f axis);
 
+  bool checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
+  bool validateSteps(const staircase_detection::centroid_list msg);
+
   double computeAngle(geometry_msgs::Point a, geometry_msgs::Point b);
   double computeDistance(std::vector<double> a, std::vector<double> b);
+
   double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
  
 private:
@@ -379,7 +386,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
 //        ROS_ERROR("Step found at height= %f", height);
         step_count ++;
         steps->operator +=(*cloud_cluster);
-        box_pub.publish(steps);
+//        box_pub.publish(steps);
 //        ros::Duration(2).sleep();
         Eigen::Vector4f centroid;
         pcl::compute3DCentroid(*cloud_cluster, centroid);
@@ -396,8 +403,8 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
     if(step_count >= 2)
     {
       bool eureka = getStairParams(height);
-//      if(eureka)
-//        box_pub.publish(steps);
+      if(eureka)
+        box_pub.publish(steps);
     }
   }
   passThrough(raw_cloud, height, true);
@@ -593,7 +600,7 @@ bool preprocess::getStairParams(double height)
   }
   else
   {
-//    ROS_ERROR("Something is not right :( w=%f h=%f",  w*100, h*100);
+    ROS_ERROR("Something is not right :( w=%f h=%f",  w*100, h*100);
     return false;
   }
 }
@@ -615,7 +622,7 @@ bool preprocess::validateSteps(staircase_detection::centroid_list msg)
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr aligned_cloud (new pcl::PointCloud<pcl::PointXYZRGB> ());
   pcl::transformPointCloud (*raw_cloud, *aligned_cloud, rotate_z);
 
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr filtered_cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
+  filtered_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::PassThrough<pcl::PointXYZRGB> pass;
   filtered_cloud->header.frame_id = raw_cloud->header.frame_id;
 
@@ -647,6 +654,7 @@ bool preprocess::validateSteps(staircase_detection::centroid_list msg)
   }
   pass.filter (*filtered_cloud);
   pcl_pub.publish(filtered_cloud);
+//  removeTopStep(filtered_cloud);
   Eigen::Vector3f axis((a.x-b.x),(a.y-b.y),0);
 
 //  double ground_height = a.z;
@@ -751,7 +759,7 @@ bool preprocess::validateSteps(staircase_detection::centroid_list msg)
 //    vertical_step_cloud->operator+=(*temp_cloud);
 //    viewCloud(vertical_step_cloud);
 //    vertical_step_pub.publish(temp_cloud);
-    ros::Duration(1).sleep();
+//    ros::Duration(1).sleep();
     //If plane is too big -> floor/drivable, if plane too small -> outlier
 //    ROS_INFO("Staircase: Points Found =%d", (int) temp_cloud->points.size());
 
@@ -806,11 +814,11 @@ bool preprocess::normalDotProduct(pcl::ModelCoefficients::Ptr &coefficients ,Eig
   Eigen::Vector3f axis_vector (axis(0)/norm_axis, axis(1)/norm_axis, axis(2)/norm_axis);
   dot_product = plane_normal(0)*axis_vector(0) + plane_normal(1)*axis_vector(1) + plane_normal(2)*axis_vector(2);
 
-  ROS_WARN("Axis (%f, %f, %f)",axis(0), axis(1), axis(2));
-  ROS_ERROR("(a,b,c) (%f,%f,%f) and dot=%f",plane_normal(0),
-                                                 plane_normal(1),
-                                                 plane_normal(2),
-                                                 dot_product);
+//  ROS_WARN("Axis (%f, %f, %f)",axis(0), axis(1), axis(2));
+//  ROS_ERROR("(a,b,c) (%f,%f,%f) and dot=%f",plane_normal(0),
+//                                                 plane_normal(1),
+//                                                 plane_normal(2),
+//                                                 dot_product);
 
   if(std::abs(dot_product)>0.8)
   {
@@ -823,6 +831,71 @@ bool preprocess::normalDotProduct(pcl::ModelCoefficients::Ptr &coefficients ,Eig
     return false;
   }
   //Estimate normals on all surfaces
+
+}
+
+/*
+ @brief: RANSAC Plane Fitting to find and remove top step if its too long/drivable)
+ @param: cloud pointer to filter
+*/
+void preprocess::removeTopStep(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud)
+{
+  pcl::SACSegmentation<pcl::PointXYZRGB> seg;
+  pcl::ExtractIndices<pcl::PointXYZRGB> extract;
+  seg.setModelType (pcl::SACMODEL_PLANE);
+  seg.setMethodType (pcl::SAC_RANSAC);
+  seg.setMaxIterations (1000);
+  seg.setDistanceThreshold (0.1);
+
+  seg.setInputCloud(cloud);
+  pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
+  pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
+  seg.segment(*inliers, *coefficients);
+
+  //Extract all points on the found plane (setNegative to false)
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr fitted_plane_cloud (new pcl::PointCloud<pcl::PointXYZRGB> ());
+  extract.setInputCloud(cloud);
+  extract.setIndices(inliers);
+  extract.setNegative(!extract_bool);
+  extract.filter(*fitted_plane_cloud);
+//  cloud->swap(fitted_plane_cloud);
+
+  Eigen::Vector4f centroid;
+  pcl::compute3DCentroid(*fitted_plane_cloud, centroid);
+
+  pcl::ModelCoefficients plane_coeff;
+  plane_coeff.values.resize (4);
+  plane_coeff.values[0] = coefficients->values[0];
+  plane_coeff.values[1] = coefficients->values[1];
+  plane_coeff.values[2] = coefficients->values[2];
+  plane_coeff.values[3] = coefficients->values[3];
+  pcl::visualization::PCLVisualizer viewer ("Output");
+
+  int v1(0);
+  int v2(1);
+  viewer.createViewPort(0.0,0.0,0.5,1.0,v1);
+  viewer.setBackgroundColor(0,0,0,v1);
+  viewer.addText("Cloud Before RANSAC", 10, 10, "Step Cloud",v1);
+  viewer.addPointCloud<pcl::PointXYZRGB>(cloud, "Step Cloud", v1);
+  viewer.addPlane(plane_coeff,centroid[0], centroid[1], centroid [2],"plane",v1);
+//  viewer.setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_REPRESENTATION_WIREFRAME,0.0,1.0,0.0,"plane",v1);
+  viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "Step Cloud");
+  viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_COLOR,0,0,1.0, "Step Cloud");
+
+  viewer.createViewPort(0.5,0.0,1.0,1.0,v2);
+  viewer.setBackgroundColor(0.1,0.1,0.1,v2);
+  viewer.addText("Cloud After RANSAC", 10, 10, "Steps Cloud After",v2);
+  viewer.addPointCloud<pcl::PointXYZRGB>(fitted_plane_cloud, "Steps Cloud After", v2);
+  viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "Steps Cloud After");
+  viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_COLOR,1.0,0,0.0, "Steps Cloud After");
+
+  viewer.addCoordinateSystem (1.0);
+
+  while (!viewer.wasStopped ())
+  {
+    viewer.spinOnce ();
+    ros::Duration(.01).sleep();
+  }
 
 }
 
