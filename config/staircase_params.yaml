@@ -1,10 +1,11 @@
-input_cloud: "/mapping_nodelet/pointcloud"
+input_cloud: "/map_nodelet/pointcloud"
 step_maybe: "/staircase_detection/steps_centroid"
 output_steps: "/staircase_detection/pointcloud/steps"
 step_bounding_box: "/staircase_detection/pointcloud/bounding_box"
 step_vertical: "/staircase_detection/pointcloud/step_vertical"
 extract_bool: true
 verbose: false
+voxel_leaf: 0.04
 delta_angle: 0.087
 z_passthrough: 0.002
 distance_threshold: 0.12
