@@ -745,7 +745,7 @@ bool preprocess::validateSteps(staircase_detection::centroid_list msg)
     if(inliers->indices.size() ==0)
     {
       ROS_ERROR("STAITCASE_DETECTION :No inliers, could not find a plane parallel to Z-axis");
-      continue;
+      break;
     }
 
     //Extract all points on the found plane (setNegative to false)
