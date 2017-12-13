@@ -82,11 +82,15 @@ struct step_metrics
 {
   double depth;
   double width;
+  double theta;
   Eigen::Vector4f centroid;
 };
-struct stairs
+
+struct stair
 {
   std::vector<step_metrics> steps;
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr stair_cloud;
+
 };
  
 class preprocess
@@ -97,7 +101,7 @@ public:
 
   std::vector<std::vector<step_metrics> > steps;
   std::vector<step_metrics> temp_step_vector;
-  std::vector<stairs> staircase;
+  std::vector<stair> staircase;
 
   ros::Subscriber pcl_sub;
   ros::Publisher pcl_pub, box_pub;
@@ -153,9 +157,11 @@ public:
   bool validateSteps(const staircase_detection::centroid_list msg);
 
   double computeAngle(geometry_msgs::Point a, geometry_msgs::Point b);
+  double stepDistance(step_metrics &a, step_metrics &b);
   double computeDistance(std::vector<double> a, std::vector<double> b);
-
   double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
+
+  int getStairIndex(step_metrics &current_step, std::vector<stair> &stairs);
  
 private:
   ros::NodeHandle nh;
@@ -396,8 +402,6 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
         //cloud_hull clustered points into new pointcloud
         cloud_cluster->points.push_back (cloud->points[*pit]);
       }
-      //      ROS_WARN("Cluster size %d", it->indices.size());
-
       //creating convex hull around the cluster
       std::vector<pcl::Vertices> polygon;
       cx_hull.setInputCloud(cloud_cluster);
@@ -414,76 +418,107 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
         }
       }
 
-      //      viewCloud(cloud_hull);
       if(checkStep(cloud_hull, step_params))
       {
+//        ROS_ERROR("Step found at height= %f", height);
         step_count++;
-        //        ROS_ERROR("Step found at height= %f", height);
+        viewCloud(cloud_cluster);
+
+        //Get stair descriptors
         Eigen::Vector4f centroid;
         pcl::compute3DCentroid(*cloud_cluster, centroid);
-        double d = step_params->at(0);
-        double w = step_params->at(1);
-        step_params->clear();
-        ROS_WARN("d=%f w=%f x=%f y=%f z=%f", d,w,centroid[0],centroid[1],centroid[2]);
-        // Store w and d in some meaningful data structure
-
         step_metrics temp_step;
         temp_step.centroid = centroid;
-        temp_step.width = w;
-        temp_step.depth = d;
-        temp_step_vector.push_back(temp_step);
+        temp_step.width = step_params->at(1);
+        temp_step.depth = step_params->at(0);
         cloud_hull->clear();
-        box_pub.publish(cloud_cluster);
-        ros::Duration(2).sleep();
-      }
-//      ROS_WARN("size of vector %d", temp_step_vector.size());
+        ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);
 
-    }
-//    steps[clustering_iteration-1].resize(size);
-//    steps.push_back(temp_step_vector);
-//    temp_step_vector.clear();
-  }
-  if(clustering_iteration ==2)
-  {
-//    ROS_ERROR("Gunna make some checking now");
-//    step_metrics temp_step;
-//    ROS_WARN("size of vector %d and iter number = %d", temp_step_vector.size(), clustering_iteration);
-//    ROS_WARN("size of vector %d", steps.at(1).size());
-    for(int i=0; i<temp_step_vector.size(); ++i)
-    {
-      std::vector<double> a,b;
-      double dist, height_diff, dist_from_params;
-      a.push_back(temp_step_vector[i].centroid[0]);
-      a.push_back(temp_step_vector[i].centroid[1]);
-
-      for(int j=i+1; j<temp_step_vector.size(); ++j)
-      {
-        if(i!=j)
+        int index = getStairIndex(temp_step, staircase);
+        if (index == -1)
         {
-          b.push_back(temp_step_vector[j].centroid[0]);
-          b.push_back(temp_step_vector[j].centroid[1]);
-          ROS_WARN("ax=%f ay=%f",a[0],a[1]);
-          ROS_WARN("bx=%f by=%f",b[0],b[1]);
-
-          height_diff = std::abs(temp_step_vector[i].centroid[2]- temp_step_vector[j].centroid[2]);
-
-          dist = std::sqrt (std::pow(computeDistance(a,b),2) + std::pow(height_diff,2) );
-          dist_from_params = std::sqrt (std::pow(temp_step_vector[i].depth,2) + std::pow(height_diff,2) );
-
-          ROS_WARN("For (%d,%d) found=%f should_be=%f",i,j,dist, dist_from_params);
-          ros::Duration(1).sleep();
-
+          ROS_WARN("Adding new staircase");
+          //put in new stair
+          stair temp_stair;
+          temp_stair.stair_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
+          temp_stair.stair_cloud->operator +=(*cloud_cluster);
+          temp_stair.steps.push_back(temp_step);
+          staircase.push_back(temp_stair);
+//          ROS_WARN("stuff");
+        }
+        else
+        {
+          ROS_WARN("Adding to old staircase");
+          //add to staircase at index
+          staircase[index].steps.push_back(temp_step);
+          staircase[index].stair_cloud->operator +=(*cloud_cluster);
+//          ROS_WARN("Added to old staircase");
         }
       }
+
+      pcl::PointCloud<pcl::PointXYZRGB>::Ptr staircase_cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
+      staircase_cloud->header.frame_id = cloud_cluster->header.frame_id;
+      ROS_WARN("Stairs number %d", staircase.size());
+      for(size_t i=0;i<staircase.size();++i)
+      {
+        ROS_WARN("Steps number %d", staircase[i].steps.size());
+        pcl::PointCloud<pcl::PointXYZRGB>::const_iterator it = staircase[i].stair_cloud->begin();
+        for(;it<staircase[i].stair_cloud->end();++it)
+        {
+          pcl::PointXYZRGB point;
+          point.x = it->x;
+          point.y = it->y;
+          point.z = it->z;
+          point.r = 0;
+          point.g = 0;
+          point.b = 0;
+          staircase_cloud->push_back(point);
+          if(i==0)
+            point.r = 255;
+          if(i==1)
+            point.g = 255;
+          if(i==2)
+            point.b = 255;
+        }
+      }
+      //publish cloud
+      box_pub.publish(staircase_cloud);
     }
-//    ROS_ERROR("Vector size after clearing %d", temp_step_vector.size());
-//    return;
   }
   passThrough(raw_cloud, height, true);
-  temp_step_vector.clear();
   return;
 }
 
+int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &stairs)
+{
+  for(size_t i=0;i<stairs.size();++i)
+  {
+    for(size_t j=0;j<stairs[i].steps.size();++j)
+    {
+      if(stepDistance(current_step, stairs[i].steps[j]) < 0.1)
+      {
+        return i;
+      }
+
+    }
+  }
+  return -1;
+}
+double preprocess::stepDistance(step_metrics &current, step_metrics &previous)
+{//TODO dont calculate height twice
+  double x_diff = std::abs(current.centroid[0]-previous.centroid[0]);
+  double y_diff = std::abs(current.centroid[1]-previous.centroid[1]);
+  double height_diff = std::abs(current.centroid[2]-previous.centroid[2]);
+  double plane_diff = std::sqrt(std::pow(x_diff,2)+ std::pow(y_diff,2) );
+  double distance = std::sqrt (std::pow(plane_diff,2) + std::pow(height_diff,2) );
+  double ideal_step_separtion = std::sqrt (std::pow(current.depth,2) + std::pow(height_diff,2) );
+
+  double threshold =std::abs(distance-ideal_step_separtion);
+  ROS_ERROR("actual %f", distance);
+  ROS_ERROR("ideal %f", ideal_step_separtion);
+  ROS_ERROR("threshold distance %f", threshold);
+  return threshold;
+}
 
 //TODO: Check if steps or false positive
 /*
@@ -614,13 +649,13 @@ bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* 
   edge[5] = computeDistance(coord_2, coord_3);
 
   std::sort(edge, edge+6);
-  if(verbose)
+  if(!verbose)
   {
     ROS_INFO("computed length of edge %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
-    ROS_INFO("Coordinates of box (%f,%f)",coord_0[0],coord_0[1]);
-    ROS_INFO("Coordinates of box (%f,%f)",coord_1[0],coord_1[1]);
-    ROS_INFO("Coordinates of box (%f,%f)",coord_2[0],coord_2[1]);
-    ROS_INFO("Coordinates of box (%f,%f)",coord_3[0],coord_3[1]);
+//    ROS_INFO("Coordinates of box (%f,%f)",coord_0[0],coord_0[1]);
+//    ROS_INFO("Coordinates of box (%f,%f)",coord_1[0],coord_1[1]);
+//    ROS_INFO("Coordinates of box (%f,%f)",coord_2[0],coord_2[1]);
+//    ROS_INFO("Coordinates of box (%f,%f)",coord_3[0],coord_3[1]);
   }
 
 //  double x_length = std::abs(vertices[0]-vertices[2]);
