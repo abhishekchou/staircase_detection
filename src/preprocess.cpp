@@ -78,12 +78,27 @@ bool wall_removed = false;
 //PointCloud variables
 
 #define PI 3.14
+struct step_metrics
+{
+  double depth;
+  double width;
+  Eigen::Vector4f centroid;
+};
+struct stairs
+{
+  std::vector<step_metrics> steps;
+};
  
 class preprocess
 {
 public:
   preprocess();
   ~preprocess();
+
+  std::vector<std::vector<step_metrics> > steps;
+  std::vector<step_metrics> temp_step_vector;
+  std::vector<stairs> staircase;
+
   ros::Subscriber pcl_sub;
   ros::Publisher pcl_pub, box_pub;
   ros::Publisher hypothesis_pub;
@@ -97,12 +112,13 @@ public:
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr filtered_cloud;
 
  
+  int step_count;
+  int clustering_iteration;
   double delta_angle;
   double z_passthrough;
   double distance_threshold;
   double cluster_tolerance;
   double step_width, step_depth;
-  double step_count;
   double voxel_leaf;
   bool extract_bool, valid_step, verbose;
 
@@ -116,6 +132,8 @@ public:
   std::vector<double> centroid_y;
   std::vector<double> centroid_z;
 
+
+
   void preprocessScene();
   void removeWalls();
 
@@ -127,11 +145,11 @@ public:
   void removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double height);
   void findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
 
-  bool checkLength(std::vector<double> vertices);
+  bool checkLength(std::vector<double> vertices, std::vector<double>* step_params);
   bool getStairParams(double height);
   bool normalDotProduct(pcl::ModelCoefficients::Ptr &coefficients ,Eigen::Vector3f axis);
 
-  bool checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
+  bool checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, std::vector<double>* step_params);
   bool validateSteps(const staircase_detection::centroid_list msg);
 
   double computeAngle(geometry_msgs::Point a, geometry_msgs::Point b);
@@ -192,6 +210,8 @@ void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
   raw_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::fromROSMsg(*msg, *raw_cloud);
   step_count = 0;
+  clustering_iteration = 0;
+  steps.resize(2);
   preprocessScene();
   //if new scene, will contain walls
 	wall_removed = false;
@@ -340,8 +360,9 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
   // Creating the KdTree object for the search method
   pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB>);
   tree->setInputCloud (cloud);
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr steps (new pcl::PointCloud<pcl::PointXYZRGB>);
-  steps->header.frame_id = raw_cloud->header.frame_id;
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_steps (new pcl::PointCloud<pcl::PointXYZRGB>);
+  cloud_steps->header.frame_id = raw_cloud->header.frame_id;
+
 
   //Euclidean clustering to identify false postives
   std::vector<pcl::PointIndices> cluster_indices;
@@ -353,19 +374,21 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
   ec.setInputCloud (cloud);
   ec.extract (cluster_indices);
   if(verbose) ROS_INFO("cluster indices size %d", cluster_indices.size());
+  clustering_iteration++;
+  step_count = 0;
 
-  // Draw concave hull around the biggest plane found in the current scene
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_hull (new pcl::PointCloud<pcl::PointXYZRGB>);
-  cloud_hull->header.frame_id = steps->header.frame_id;
 
   //Convex Hull
   pcl::ConvexHull<pcl::PointXYZRGB> cx_hull;
 
   if(cluster_indices.size() !=0)
   {
-
     for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin (); it != cluster_indices.end (); ++it)
     {
+      // Draw concave hull around the biggest plane found in the current scene
+      pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_hull (new pcl::PointCloud<pcl::PointXYZRGB>);
+      cloud_hull->header.frame_id = cloud_steps->header.frame_id;
+      std::vector<double>* step_params (new std::vector<double>);
       pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_cluster (new pcl::PointCloud<pcl::PointXYZRGB>);
       cloud_cluster->header.frame_id = raw_cloud->header.frame_id;
       for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); ++pit)
@@ -373,7 +396,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
         //cloud_hull clustered points into new pointcloud
         cloud_cluster->points.push_back (cloud->points[*pit]);
       }
-//      ROS_WARN("Cluster size %d", it->indices.size());
+      //      ROS_WARN("Cluster size %d", it->indices.size());
 
       //creating convex hull around the cluster
       std::vector<pcl::Vertices> polygon;
@@ -381,33 +404,83 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
       cx_hull.setComputeAreaVolume(true);
       cx_hull.reconstruct(*cloud_hull,polygon);
 
-      if(checkStep(cloud_hull))
+      if(verbose)
       {
-//        ROS_ERROR("Step found at height= %f", height);
-        step_count ++;
-        steps->operator +=(*cloud_cluster);
-//        box_pub.publish(steps);
-//        ros::Duration(2).sleep();
+        for(size_t i=0; i<polygon[0].vertices.size();++i)
+        {
+          ROS_WARN("vertex (%f %f %f) ", cloud_hull->points[(polygon[0].vertices[i])].x,
+              cloud_hull->points[(polygon[0].vertices[i])].y,
+              cloud_hull->points[(polygon[0].vertices[i])].z );
+        }
+      }
+
+      //      viewCloud(cloud_hull);
+      if(checkStep(cloud_hull, step_params))
+      {
+        step_count++;
+        //        ROS_ERROR("Step found at height= %f", height);
         Eigen::Vector4f centroid;
         pcl::compute3DCentroid(*cloud_cluster, centroid);
-        centroid_x.push_back(centroid[0]);
-        centroid_y.push_back(centroid[1]);
-        centroid_z.push_back(centroid[2]);
-//        ROS_WARN("z centroid %f", centroid_z.back());
+        double d = step_params->at(0);
+        double w = step_params->at(1);
+        step_params->clear();
+        ROS_WARN("d=%f w=%f x=%f y=%f z=%f", d,w,centroid[0],centroid[1],centroid[2]);
+        // Store w and d in some meaningful data structure
 
-        //assumption that there is only one staircase in the scene
-        //so there will be only valid step at a particular height
-        break;
+        step_metrics temp_step;
+        temp_step.centroid = centroid;
+        temp_step.width = w;
+        temp_step.depth = d;
+        temp_step_vector.push_back(temp_step);
+        cloud_hull->clear();
+        box_pub.publish(cloud_cluster);
+        ros::Duration(2).sleep();
+      }
+//      ROS_WARN("size of vector %d", temp_step_vector.size());
+
+    }
+//    steps[clustering_iteration-1].resize(size);
+//    steps.push_back(temp_step_vector);
+//    temp_step_vector.clear();
+  }
+  if(clustering_iteration ==2)
+  {
+//    ROS_ERROR("Gunna make some checking now");
+//    step_metrics temp_step;
+//    ROS_WARN("size of vector %d and iter number = %d", temp_step_vector.size(), clustering_iteration);
+//    ROS_WARN("size of vector %d", steps.at(1).size());
+    for(int i=0; i<temp_step_vector.size(); ++i)
+    {
+      std::vector<double> a,b;
+      double dist, height_diff, dist_from_params;
+      a.push_back(temp_step_vector[i].centroid[0]);
+      a.push_back(temp_step_vector[i].centroid[1]);
+
+      for(int j=i+1; j<temp_step_vector.size(); ++j)
+      {
+        if(i!=j)
+        {
+          b.push_back(temp_step_vector[j].centroid[0]);
+          b.push_back(temp_step_vector[j].centroid[1]);
+          ROS_WARN("ax=%f ay=%f",a[0],a[1]);
+          ROS_WARN("bx=%f by=%f",b[0],b[1]);
+
+          height_diff = std::abs(temp_step_vector[i].centroid[2]- temp_step_vector[j].centroid[2]);
+
+          dist = std::sqrt (std::pow(computeDistance(a,b),2) + std::pow(height_diff,2) );
+          dist_from_params = std::sqrt (std::pow(temp_step_vector[i].depth,2) + std::pow(height_diff,2) );
+
+          ROS_WARN("For (%d,%d) found=%f should_be=%f",i,j,dist, dist_from_params);
+          ros::Duration(1).sleep();
+
+        }
       }
     }
-    if(step_count >= 2)
-    {
-      bool eureka = getStairParams(height);
-      if(eureka)
-        box_pub.publish(steps);
-    }
+//    ROS_ERROR("Vector size after clearing %d", temp_step_vector.size());
+//    return;
   }
   passThrough(raw_cloud, height, true);
+  temp_step_vector.clear();
   return;
 }
 
@@ -416,9 +489,9 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
 /*
  @brief: Given the dimensions of the horizontal plane, check if valid step in order to localise
        search to this area.
- @param: Dimensions of the step
+ @param: Cloud with step
  */
-bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
+bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,std::vector<double>* step_params)
 {
   valid_step = false;
 //  size_t hull_size = cloud->points.size();
@@ -491,7 +564,7 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
   ROS_INFO("Intended Coordinates(%f,%f)",x_max_y,max_y);
   }
 
-  valid_step = checkLength(coords);
+  valid_step = checkLength(coords, step_params);
   return valid_step;
 }
 
@@ -515,7 +588,7 @@ double preprocess::computeDistance(std::vector<double> a, std::vector<double> b)
        edge of the step.
  @param: Vertices of the convex polygon, area od the polygon
  */
-bool preprocess::checkLength(std::vector<double> vertices)
+bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* step_params)
 {
   double edge[6];
   bool result = false;
@@ -557,6 +630,8 @@ bool preprocess::checkLength(std::vector<double> vertices)
   {
     if(edge[0] >= step_depth && edge[2] >= step_width)
     {
+      step_params->push_back(edge[0]);
+      step_params->push_back(edge[2]);
       result = true;
 //      ROS_ERROR("This is okay");
     }
@@ -793,6 +868,7 @@ bool preprocess::validateSteps(staircase_detection::centroid_list msg)
   double w = computeDistance(p,q);
   double h = std::abs(c.at(0).z - c.at(1).z);
   ROS_ERROR("Vertical:: %f cm behind and %f above",w*100, h*100);
+  //TODO:: add ifs for vertical planes centroid checking
   return true;
 }
 
@@ -1017,10 +1093,10 @@ void preprocess::viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
   viewer.setBackgroundColor(0,0,0,v1);
   viewer.addText("Step Cloud", 10, 10, "window1",v1);
   viewer.addPointCloud<pcl::PointXYZRGB>(cloud, "Step Cloud", v1);
-  viewer.addPointCloudNormals<pcl::PointXYZRGB, pcl::Normal> (cloud, normals, 1, 0.05, "normals");
-  viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_COLOR,1.0,0,0, "normals");
+//  viewer.addPointCloudNormals<pcl::PointXYZRGB, pcl::Normal> (cloud, normals, 1, 0.05, "normals");
+//  viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_COLOR,1.0,0,0, "normals");
   viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "Step Cloud");
-  viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_COLOR,0,0,1.0, "Step Cloud");
+//  viewer.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_COLOR,0,0,1.0, "Step Cloud");
   viewer.addCoordinateSystem (1.0);
 //  viewer.spinOnce (100);
 
