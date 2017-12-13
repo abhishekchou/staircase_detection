@@ -454,11 +454,11 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
           staircase[index].stair_cloud->operator +=(*cloud_cluster);
 //          ROS_WARN("Added to old staircase");
         }
+        ROS_WARN("Stairs number %d", staircase.size());
       }
 
       pcl::PointCloud<pcl::PointXYZRGB>::Ptr staircase_cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
       staircase_cloud->header.frame_id = cloud_cluster->header.frame_id;
-      ROS_WARN("Stairs number %d", staircase.size());
       for(size_t i=0;i<staircase.size();++i)
       {
         ROS_WARN("Steps number %d", staircase[i].steps.size());
@@ -472,17 +472,18 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
           point.r = 0;
           point.g = 0;
           point.b = 0;
-          staircase_cloud->push_back(point);
           if(i==0)
             point.r = 255;
           if(i==1)
             point.g = 255;
           if(i==2)
             point.b = 255;
+          staircase_cloud->push_back(point);
         }
       }
       //publish cloud
       box_pub.publish(staircase_cloud);
+      ros::Duration(1).sleep();
     }
   }
   passThrough(raw_cloud, height, true);
@@ -495,11 +496,12 @@ int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &st
   {
     for(size_t j=0;j<stairs[i].steps.size();++j)
     {
-      if(stepDistance(current_step, stairs[i].steps[j]) < 0.1)
+      double d = stepDistance(current_step, stairs[i].steps[j]);
+      double h = std::fabs(current_step.centroid[2]-stairs[i].steps[j].centroid[2]);
+      if( d < 0.1 && h < 0.3 && h>0.05)
       {
         return i;
       }
-
     }
   }
   return -1;
@@ -508,7 +510,7 @@ double preprocess::stepDistance(step_metrics &current, step_metrics &previous)
 {//TODO dont calculate height twice
   double x_diff = std::abs(current.centroid[0]-previous.centroid[0]);
   double y_diff = std::abs(current.centroid[1]-previous.centroid[1]);
-  double height_diff = std::abs(current.centroid[2]-previous.centroid[2]);
+  double height_diff = 0.3;//std::abs(current.centroid[2]-previous.centroid[2]);
   double plane_diff = std::sqrt(std::pow(x_diff,2)+ std::pow(y_diff,2) );
   double distance = std::sqrt (std::pow(plane_diff,2) + std::pow(height_diff,2) );
   double ideal_step_separtion = std::sqrt (std::pow(current.depth,2) + std::pow(height_diff,2) );
@@ -649,7 +651,7 @@ bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* 
   edge[5] = computeDistance(coord_2, coord_3);
 
   std::sort(edge, edge+6);
-  if(!verbose)
+  if(verbose)
   {
     ROS_INFO("computed length of edge %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
 //    ROS_INFO("Coordinates of box (%f,%f)",coord_0[0],coord_0[1]);
