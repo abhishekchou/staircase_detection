@@ -157,7 +157,7 @@ public:
   bool validateSteps(const staircase_detection::centroid_list msg);
 
   double computeAngle(geometry_msgs::Point a, geometry_msgs::Point b);
-  double stepDistance(step_metrics &a, step_metrics &b);
+  double stepDistance(step_metrics &a, step_metrics &b, double &ideal, double &actual);
   double computeDistance(std::vector<double> a, std::vector<double> b);
   double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
 
@@ -218,6 +218,7 @@ void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
   step_count = 0;
   clustering_iteration = 0;
   steps.resize(2);
+  staircase.clear();
   preprocessScene();
   //if new scene, will contain walls
 	wall_removed = false;
@@ -422,7 +423,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
       {
 //        ROS_ERROR("Step found at height= %f", height);
         step_count++;
-        viewCloud(cloud_cluster);
+//        viewCloud(cloud_cluster);
 
         //Get stair descriptors
         Eigen::Vector4f centroid;
@@ -432,23 +433,28 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
         temp_step.width = step_params->at(1);
         temp_step.depth = step_params->at(0);
         cloud_hull->clear();
-        ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);
+//        ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);
 
         int index = getStairIndex(temp_step, staircase);
+        if (index == -2)
+        {
+          ROS_WARN("Adding to nothing, seen this before");
+        }
         if (index == -1)
         {
           ROS_WARN("Adding new staircase");
+          ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);
           //put in new stair
           stair temp_stair;
           temp_stair.stair_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
           temp_stair.stair_cloud->operator +=(*cloud_cluster);
           temp_stair.steps.push_back(temp_step);
           staircase.push_back(temp_stair);
-//          ROS_WARN("stuff");
         }
-        else
+        if (index >=0)
         {
           ROS_WARN("Adding to old staircase");
+          ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);
           //add to staircase at index
           staircase[index].steps.push_back(temp_step);
           staircase[index].stair_cloud->operator +=(*cloud_cluster);
@@ -469,15 +475,24 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
           point.x = it->x;
           point.y = it->y;
           point.z = it->z;
-          point.r = 0;
-          point.g = 0;
-          point.b = 0;
+
+          int max = staircase.size();
+
+          point.r = i/std::pow(255,2);
+          point.g = (int)i/255 % (int)std::pow(255,2);
+          point.b = i % 255;
           if(i==0)
-            point.r = 255;
+          {
+            point.r = 255;point.r = 0;point.b = 0;
+          }
           if(i==1)
-            point.g = 255;
+          {
+            point.r = 0;point.r = 255;point.b = 0;
+          }
           if(i==2)
-            point.b = 255;
+          {
+            point.r = 0;point.r = 0;point.b = 255;
+          }
           staircase_cloud->push_back(point);
         }
       }
@@ -496,9 +511,29 @@ int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &st
   {
     for(size_t j=0;j<stairs[i].steps.size();++j)
     {
-      double d = stepDistance(current_step, stairs[i].steps[j]);
-      double h = std::fabs(current_step.centroid[2]-stairs[i].steps[j].centroid[2]);
-      if( d < 0.1 && h < 0.3 && h>0.05)
+      double ideal, actual, height, diff;
+      diff = stepDistance(current_step, stairs[i].steps[j], ideal, actual);
+      height = std::fabs(current_step.centroid[2]-stairs[i].steps[j].centroid[2]);
+      ROS_ERROR("Stair-%d Step-%d diff=%f height=%f",i+1,j+1,diff,height);
+      ROS_ERROR("                ideal=%f actual=%f",ideal, actual);
+      ros::Duration(1).sleep();
+      if(actual<0.05 && height <0.05)
+      {
+        return -2;
+      }
+
+      // within one step separation of an existing step
+      // and height is one step apart
+      if( diff < 0.15 && height<0.3 && height>0.08)
+      {
+        return i;
+      }
+
+      // within two step separation of an existing step and
+      // height is two steps apart
+//      ROS_WARN("two steps apart diff=%f",std::fabs(diff-ideal));
+//      ROS_WARN("two steps apart height=%f",std::fabs(height-0.6));
+      if(std::fabs(diff-ideal)<0.15 && std::fabs(height-0.6)<0.15)
       {
         return i;
       }
@@ -506,19 +541,22 @@ int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &st
   }
   return -1;
 }
-double preprocess::stepDistance(step_metrics &current, step_metrics &previous)
+
+double preprocess::stepDistance(step_metrics &current, step_metrics &previous, double &ideal, double &actual)
 {//TODO dont calculate height twice
   double x_diff = std::abs(current.centroid[0]-previous.centroid[0]);
   double y_diff = std::abs(current.centroid[1]-previous.centroid[1]);
-  double height_diff = 0.3;//std::abs(current.centroid[2]-previous.centroid[2]);
+  double height_diff = std::abs(current.centroid[2]-previous.centroid[2]);
   double plane_diff = std::sqrt(std::pow(x_diff,2)+ std::pow(y_diff,2) );
   double distance = std::sqrt (std::pow(plane_diff,2) + std::pow(height_diff,2) );
-  double ideal_step_separtion = std::sqrt (std::pow(current.depth,2) + std::pow(height_diff,2) );
+  double ideal_step_separtion = std::sqrt (std::pow(current.depth,2) + std::pow(0.3,2) );
 
   double threshold =std::abs(distance-ideal_step_separtion);
-  ROS_ERROR("actual %f", distance);
-  ROS_ERROR("ideal %f", ideal_step_separtion);
-  ROS_ERROR("threshold distance %f", threshold);
+//  ROS_ERROR("actual %f", distance);
+//  ROS_ERROR("ideal %f", ideal_step_separtion);
+//  ROS_ERROR("threshold distance %f", threshold);
+  ideal = ideal_step_separtion;
+  actual = distance;
   return threshold;
 }
 
