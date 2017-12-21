@@ -1145,7 +1145,7 @@ bool preprocess::validateSteps(staircase_detection::centroid_list msg)
         vertical_centroid_vector.push_back(cent);
 //        vertical_step_pub.publish(vertical_step_cloud);
 //        viewCloud(vertical_step_cloud, cent);
-        ros::Duration(0.5).sleep();
+//        ros::Duration(0.5).sleep();
         ROS_ERROR("VERTICAAAALLLLLL %d", temp_size);
          vertical_step_pub.publish(vertical_step_cloud);
       }
