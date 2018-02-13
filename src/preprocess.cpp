@@ -90,7 +90,6 @@ struct stair
 {
   std::vector<step_metrics> steps;
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr stair_cloud;
-
 };
  
 class preprocess
@@ -115,7 +114,6 @@ public:
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr temp_cloud;
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr filtered_cloud;
 
- 
   int step_count;
   int clustering_iteration;
   double delta_angle;
@@ -140,8 +138,6 @@ public:
   std::vector<double> centroid_x;
   std::vector<double> centroid_y;
   std::vector<double> centroid_z;
-
-
 
   void preprocessScene();
   void removeWalls();
@@ -179,11 +175,11 @@ private:
 preprocess::preprocess() : nh_private("~")
 {
   //Load params form YAML input
-  nh_private.getParam("input_cloud", input_cloud);
-  nh_private.getParam("output_steps", output_steps);
-  nh_private.getParam("step_maybe", step_maybe);
-  nh_private.getParam("step_bounding_box", step_bounding_box);
-  nh_private.getParam("step_vertical", step_vertical);
+  nh_private.getParam("input_cloud_topic", input_cloud);
+  nh_private.getParam("output_steps_topic", output_steps);
+  nh_private.getParam("step_maybe_topic", step_maybe);
+  nh_private.getParam("step_bounding_box_topic", step_bounding_box);
+  nh_private.getParam("step_vertical_topic", step_vertical);
   nh_private.getParam("extract_bool", extract_bool);
   nh_private.getParam("verbose", verbose);
 
@@ -212,9 +208,9 @@ preprocess::preprocess() : nh_private("~")
 preprocess::~preprocess()
 {}
 
-/*
- @brief: Callback function for laser data
- @param: sensor_msgs::PointCloud2
+/**
+ * @brief Callback function for laser data
+ * @param sensor_msgs::PointCloud2
  */
 void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
 {
@@ -227,16 +223,19 @@ void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
   pcl::fromROSMsg(*msg, *raw_cloud);
   step_count = 0;
   clustering_iteration = 0;
+
+  //steps struct resized to check first 2 steps
   steps.resize(2);
+
   staircase.clear();
   preprocessScene();
   //if new scene, will contain walls
 	wall_removed = false;
 }
 
-/*
- @brief: Remove NANs followed by a Voxel Grid filter to reduce cloud size and resolution
- @param: PointCloud constptr
+/**
+ * @brief NAN Removal, Voxel Grid filter to reduce cloud size and resolution, Passthrough filter
+         to limit search region
  */
 void preprocess::preprocessScene()
 {
@@ -261,6 +260,9 @@ void preprocess::preprocessScene()
   pcl::PassThrough<pcl::PointXYZRGB> pass;
   plane_cloud->header.frame_id = cloud->header.frame_id;
 
+  ///////////////////////
+  //PassThrough Filtering
+  ///////////////////////
   double z = -1.0;
   cloud_copy->operator +=(*raw_cloud);
   pass.setInputCloud (cloud_copy);
@@ -283,10 +285,15 @@ void preprocess::preprocessScene()
   passThrough(raw_cloud, z, true);
 }
 
-//TODO change to function call by ref
 /*
- @brief: Simple passthrough filter to operate only on specific areas of the pointcloud map
- @param: filter from height z to z+0.5m
+ @brief:
+ @param:
+ */
+/**
+ * @brief Passthrough filter to operate only on specific areas of the pointcloud map, called iteratively
+ * @param PointlCloud cloud
+ * @param double height
+ * @param bool swap_or_not
  */
 void preprocess::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double z, bool horizontal)
 {
@@ -307,6 +314,12 @@ void preprocess::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, doub
   return;
 }
 
+/**
+ * @brief
+ * @param cloud
+ * @param x
+ * @param horizontal
+ */
 void preprocess::passThrough_vertical(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double x, bool horizontal)
 {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_copy (new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -326,20 +339,22 @@ void preprocess::passThrough_vertical(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cl
   return;
 }
 
-/*
- @brief: Main function doing all the fun stuff
- @param:
+
+/**
+ * @brief Main function doing all the fun stuff
+ * @param PointCloud cloud
  */
 void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
 {
-  pcl::SACSegmentation<pcl::PointXYZRGB> seg;
-  pcl::ExtractIndices<pcl::PointXYZRGB> extract;
-
-  //Get cloud resolution to set RANSAC parameters
+//Get cloud resolution to set RANSAC parameters
 //  float resolution = computeCloudResolution(raw_cloud);
 //  if(debug)ROS_INFO("Cloud Resolution: %f", resolution);
 
-  //Segmentation parameters for planes
+  //Segmentation parameters for horizontal planes
+  pcl::SACSegmentation<pcl::PointXYZRGB> seg;
+  pcl::ExtractIndices<pcl::PointXYZRGB> extract;
+
+  //SACMODEL - Planes with normal parallel to given axis within EPS angle threshold
   seg.setModelType(pcl::SACMODEL_PERPENDICULAR_PLANE);
   seg.setMethodType(pcl::SAC_RANSAC);
   seg.setMaxIterations(1000);
@@ -347,11 +362,7 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
   seg.setEpsAngle(delta_angle/2);
   seg.setDistanceThreshold(0.04);
 
-//  if(!wall_removed)
-//  {
-//    removeWalls();
-//  }
-
+  // Number of points in the scene to check and limit filtering of segmented planes
   int points_num = (int)plane_cloud->points.size();
   if(verbose) ROS_INFO("Staircase: Initial Cloud Size= %d", points_num);
 
@@ -362,9 +373,9 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
     step_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
     step_cloud->header.frame_id = raw_cloud->header.frame_id;
 
+    // Model paramters for plane fitting
     pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
     pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
-
     seg.setInputCloud(plane_cloud);
     seg.segment(*inliers, *coefficients);
     if(verbose) ROS_INFO("Staircase: Segmented Plane - Inliers size =%d", (int) inliers->indices.size());
@@ -374,7 +385,7 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
       break;
     }
 
-    //Extract all points on the found plane (setNegative to false)
+    //Extract all points on the found plane into temporary container (setNegative to false)
     extract.setInputCloud(plane_cloud);
     extract.setIndices(inliers);
     extract.setNegative(!extract_bool);
@@ -386,7 +397,7 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
     double d = coefficients->values[3];
     double height = (-d/c);
 
-    //If plane is too big -> floor/drivable, if plane too small -> outlier
+    //If plane is too big => floor/drivable, if plane too small => outlier
     if(temp_size <10000 && temp_size>500)
     {
       step_cloud->operator+=(*temp_cloud);
@@ -399,6 +410,8 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
     pcl_pub.publish(step_cloud);
     ros::Duration(1).sleep();
 
+    // If valid step, cluster steps together
+    // Else filter the next 20cm section (in z-axis) and do over
     if(step_cloud->points.size() !=0)
       removeOutliers(step_cloud, height);
     else
@@ -408,20 +421,20 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
   }
 }
 
-/*
- @brief: Cluster segmented planes, draw convex hulls around the clusters and ignore planes that are
-       not big/wide/deep enough to be stairs
- @param: constptr to current pointloud
+/**
+ * @brief Cluster segmented planes, draw convex hulls around the clusters and ignore planes that are
+           not big/wide/deep enough to be stairs
+ * @param POintCloud::ConstPtr cloud
+ * @param double height
  */
-
 void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double height)
 {
 
   // Creating the KdTree object for the search method
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr staircase_cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB>);
-  tree->setInputCloud (cloud);
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_steps (new pcl::PointCloud<pcl::PointXYZRGB>);
+  tree->setInputCloud (cloud);
   cloud_steps->header.frame_id = raw_cloud->header.frame_id;
 
 
@@ -438,26 +451,29 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
   clustering_iteration++;
   step_count = 0;
 
-
-  //Convex Hull
+  // Empty Convex Hull
   pcl::ConvexHull<pcl::PointXYZRGB> cx_hull;
 
   if(cluster_indices.size() !=0)
   {
-    for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin (); it != cluster_indices.end (); ++it)
+    for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin ();
+         it != cluster_indices.end ();
+         ++it)
     {
-      // Draw concave hull around the biggest plane found in the current scene
+      // Draw Hull around the biggest cluster found in the current scene
       pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_hull (new pcl::PointCloud<pcl::PointXYZRGB>);
       cloud_hull->header.frame_id = cloud_steps->header.frame_id;
       std::vector<double>* step_params (new std::vector<double>);
       pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_cluster (new pcl::PointCloud<pcl::PointXYZRGB>);
       cloud_cluster->header.frame_id = raw_cloud->header.frame_id;
+
+      //Hull clustered points into new pointcloud
       for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); ++pit)
       {
-        //cloud_hull clustered points into new pointcloud
         cloud_cluster->points.push_back (cloud->points[*pit]);
       }
-      //creating convex hull around the cluster
+
+      //creating Convex hull around the cluster
       std::vector<pcl::Vertices> polygon;
       cx_hull.setInputCloud(cloud_cluster);
       cx_hull.setComputeAreaVolume(true);
@@ -467,20 +483,17 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
       {
         for(size_t i=0; i<polygon[0].vertices.size();++i)
         {
-          ROS_WARN("vertex (%f %f %f) ", cloud_hull->points[(polygon[0].vertices[i])].x,
+          ROS_WARN("vertex (%f %f %f) ",
+              cloud_hull->points[(polygon[0].vertices[i])].x,
               cloud_hull->points[(polygon[0].vertices[i])].y,
               cloud_hull->points[(polygon[0].vertices[i])].z );
         }
       }
 
+      // TODO write comment on checkStep function
       if(checkStep(cloud_hull, step_params, false))
       {
-//        ROS_ERROR("Step found at height= %f", height);
         step_count++;
-        geometry_msgs::Point a;
-        a.z=0;a.y=0;a.x=0;
-//        viewCloud(cloud_hull, a);
-
         //Get stair descriptors
         Eigen::Vector4f centroid;
         pcl::compute3DCentroid(*cloud_cluster, centroid);
@@ -493,6 +506,12 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
         geometry_msgs::Point c;
         c.x = centroid[0];c.y = centroid[1];c.z = centroid[2];
 //        viewCloud(cloud_cluster,c);
+
+        /* Categorize each found step into diff categories:
+            (i)   Seen step before - ignore
+            (ii)  New Step in Existing Staircase, and
+            (iii) New Staircase
+        */
         int index = getStairIndex(temp_step, staircase);
         if (index == -2 && verbose)
         {
@@ -521,8 +540,11 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
         if (verbose) ROS_WARN("Stairs number %d", staircase.size());
       }
 
+      //Individual PointClouds with all steps in a staircase
       staircase_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
       staircase_cloud->header.frame_id = cloud_cluster->header.frame_id;
+
+      //Change color of step in staircase for easy visualization
       for(size_t i=0;i<staircase.size();++i)
       {
         if (verbose)ROS_WARN("Steps number %d", staircase[i].steps.size());
@@ -593,6 +615,12 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
   return;
 }
 
+/**
+ * @brief Find correct category(seen, new step, new stair) for each new found step
+ * @param step_metrics current_step
+ * @param vector<step_metrics> stairs
+ * @return int index
+ */
 int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &stairs)
 {
   for(size_t i=0;i<stairs.size();++i)
@@ -633,13 +661,24 @@ int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &st
   return -1;
 }
 
+/**
+ * @brief Compute distance between two consecutive found steps, compare to what distance bw consecutive
+ *        steps in a staircase should be. Used to make distinction between categories
+ * @param step_metrics current
+ * @param step_metrics previous
+ * @param double ideal_distance
+ * @param double actual_distance
+ * @return double threshold
+ */
 double preprocess::stepDistance(step_metrics &current, step_metrics &previous, double &ideal, double &actual)
 {
   //TODO dont calculate height twice
   double x_diff = std::abs(current.centroid[0]-previous.centroid[0]);
   double y_diff = std::abs(current.centroid[1]-previous.centroid[1]);
+
   double height_diff = std::abs(current.centroid[2]-previous.centroid[2]);
   double plane_diff = std::sqrt(std::pow(x_diff,2)+ std::pow(y_diff,2) );
+
   double distance = std::sqrt (std::pow(plane_diff,2) + std::pow(height_diff,2) );
   double ideal_step_separtion = std::sqrt (std::pow(current.depth,2) + std::pow(step_height,2) );
 
@@ -653,16 +692,21 @@ double preprocess::stepDistance(step_metrics &current, step_metrics &previous, d
 }
 
 //TODO: Check if steps or false positive
-/*
- @brief: Given the dimensions of the horizontal plane, check if valid step in order to localise
-       search to this area.
- @param: Cloud with step
+/**
+ * @brief Given the dimensions of the horizontal plane, check if step is valid in order to localise
+          search to this area.
+ * @param PointCloud cloud
+ * @param vector<step_metrics> step_params
+ * @param bool _isvertical
+ * @return
  */
 bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,std::vector<double>* step_params, bool _vertical)
 {
   std::vector<double> coords;
   valid_step = false;
   vertical = _vertical;
+
+  // Find coordinates of the 4 vertices of the step
   if (!vertical)
   {
     //  size_t hull_size = cloud->points.size();
@@ -672,7 +716,8 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
     double min_x = 50, y_min_x= 50;
     double min_y = 50, x_min_y= 50;
 
-    if(verbose) ROS_ERROR("cluster size %d",cloud->width);
+    if(verbose)
+      ROS_ERROR("cluster size %d",cloud->width);
 
     for(it = cloud->begin(); it != cloud->end(); it++)
     {
@@ -801,13 +846,17 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
 //  ROS_INFO("Min Pair (%f,%f)",min_z, min_y);
 //  ROS_INFO("Max Pair (%f,%f)",max_z, max_y);
 
+  // Check if the step dimensions are acceptable
   valid_step = checkLength(coords, step_params);
   return valid_step;
 }
 
-/*
- @brief: compute euclidean distsance between two points
- @param: vector<double> start and end points
+
+/**
+ * @brief Compute Euclidean Distance between (x,y) pair
+ * @param vector a
+ * @param vector b
+ * @return double distance
  */
 double preprocess::computeDistance(std::vector<double> a, std::vector<double> b)
 {
@@ -816,14 +865,15 @@ double preprocess::computeDistance(std::vector<double> a, std::vector<double> b)
   x2 = b[0];
   y1 = a[1];
   y2 = b[1];
-  double length = std::sqrt (std::pow((x1-x2),2) + std::pow((y1-y2),2) );
-  return length;
+  double distance = std::sqrt (std::pow((x1-x2),2) + std::pow((y1-y2),2) );
+  return distance;
 }
 
-/*
- @brief: Given the convex hull around bottom step, compute the length and equation of the longest
-       edge of the step.
- @param: Vertices of the convex polygon, area od the polygon
+/**
+ * @brief preprocess::checkLength
+ * @param vertices
+ * @param step_params
+ * @return
  */
 bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* step_params)
 {
