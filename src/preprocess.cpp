@@ -134,6 +134,7 @@ public:
   std::string step_maybe;
   std::string step_bounding_box;
   std::string step_vertical;
+  std::string robot_pose;
 
   std::vector<double> centroid_x;
   std::vector<double> centroid_y;
@@ -182,6 +183,7 @@ preprocess::preprocess() : nh_private("~")
   nh_private.getParam("step_vertical_topic", step_vertical);
   nh_private.getParam("extract_bool", extract_bool);
   nh_private.getParam("verbose", verbose);
+  nh_private.getParam("robot_pose_topic", robot_pose);
 
   nh_private.param("delta_angle", delta_angle, 0.08);
   nh_private.param("cluster_tolerance", cluster_tolerance, 0.03);
@@ -235,7 +237,8 @@ void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
 
 /**
  * @brief NAN Removal, Voxel Grid filter to reduce cloud size and resolution, Passthrough filter
-         to limit search region
+ *        to limit search region
+ * @param None
  */
 void preprocess::preprocessScene()
 {
@@ -260,9 +263,10 @@ void preprocess::preprocessScene()
   pcl::PassThrough<pcl::PointXYZRGB> pass;
   plane_cloud->header.frame_id = cloud->header.frame_id;
 
-  ///////////////////////
-  //PassThrough Filtering
-  ///////////////////////
+  //////////////////////////////////////////////
+  //PassThrough Filtering x(-6:6) y(-6:6) z(0:4)
+  //////////////////////////////////////////////
+  //TODO : Passthrough filter "around" the robot and not the absolute scene
   double z = -1.0;
   cloud_copy->operator +=(*raw_cloud);
   pass.setInputCloud (cloud_copy);
@@ -311,7 +315,7 @@ void preprocess::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, doub
 }
 
 /**
- * @brief
+ * @brief UNUSED
  * @param cloud
  * @param x
  * @param horizontal
@@ -614,7 +618,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
 /**
  * @brief preprocess::removeOutliers_vertical
  * @param PointCloud with vertical planes
- * @return
+ * @return bool removed_outliers
  */
 bool preprocess::removeOutliers_vertical(pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_cluster)
 {
@@ -754,7 +758,6 @@ int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &st
  */
 double preprocess::stepDistance(step_metrics &current, step_metrics &previous, double &ideal, double &actual)
 {
-  //TODO dont calculate height twice
   double x_diff = std::abs(current.centroid[0]-previous.centroid[0]);
   double y_diff = std::abs(current.centroid[1]-previous.centroid[1]);
 
@@ -1412,7 +1415,6 @@ void preprocess::removeTopStep(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud)
 
 }
 
-//TODO change to function call by reference
 /**
  * @brief Remove all large planes perpendicular to the floor - walls
  */
@@ -1455,7 +1457,6 @@ void preprocess::removeWalls()
   wall_removed = true;
   return;
 }
-
 
 /**
  * @brief Compute resolution of the pointcloud in order to have uniform filter params
@@ -1565,10 +1566,7 @@ int main(int argc, char **argv)
   preprocess pr;
 
   while(ros::ok())
-    ros::spinOnce();/*
- @brief: Codeblock taken from pcl tutorials-correspondence grouping.
- @param: PointCloud constptr
- */
+    ros::spinOnce();
  
   return 0;
 }
