@@ -6,6 +6,7 @@
 #include <ros/ros.h>
 #include <std_msgs/String.h>
 #include <geometry_msgs/Point.h>
+#include <nav_msgs/Odometry.h>
 #include <string.h>
  
 //_____PCL HEADERS____//
@@ -102,7 +103,7 @@ public:
   std::vector<step_metrics> temp_step_vector;
   std::vector<stair> staircase;
 
-  ros::Subscriber pcl_sub;
+  ros::Subscriber pcl_sub, pose_sub;
   ros::Publisher pcl_pub, box_pub;
   ros::Publisher hypothesis_pub;
   ros::Publisher vertical_step_pub;
@@ -124,7 +125,9 @@ public:
   double voxel_leaf;
   double step_height;
   double search_depth;
+
   geometry_msgs::Point dummy;
+  nav_msgs::Odometry robot_pose;
 
   bool extract_bool, valid_step, verbose;
   bool vertical;
@@ -134,7 +137,7 @@ public:
   std::string step_maybe;
   std::string step_bounding_box;
   std::string step_vertical;
-  std::string robot_pose;
+  std::string robot_pose_topic;
 
   std::vector<double> centroid_x;
   std::vector<double> centroid_y;
@@ -143,13 +146,15 @@ public:
   void preprocessScene();
   void removeWalls();
 
-  void removeTopStep(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud);
+  void viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, geometry_msgs::Point msg);
+  void poseCallback(const nav_msgs::Odometry::ConstPtr &msg);
+  void laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg);
+
+  void removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double height);
   void passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double z, bool horizontal);
+  void removeTopStep(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud);
   void passThrough_vertical(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double z, bool horizontal);
 
-  void viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, geometry_msgs::Point msg);
-  void laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg);
-  void removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double height);
   void findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
 
   bool checkLength(std::vector<double> vertices, std::vector<double>* step_params);
@@ -182,8 +187,8 @@ preprocess::preprocess() : nh_private("~")
   nh_private.getParam("step_bounding_box_topic", step_bounding_box);
   nh_private.getParam("step_vertical_topic", step_vertical);
   nh_private.getParam("extract_bool", extract_bool);
+  nh_private.getParam("robot_pose_topic", robot_pose_topic);
   nh_private.getParam("verbose", verbose);
-  nh_private.getParam("robot_pose_topic", robot_pose);
 
   nh_private.param("delta_angle", delta_angle, 0.08);
   nh_private.param("cluster_tolerance", cluster_tolerance, 0.03);
@@ -198,17 +203,41 @@ preprocess::preprocess() : nh_private("~")
                                                    1000,
                                                    &preprocess::laserCallback,
                                                    this);
+  pose_sub = nh.subscribe<nav_msgs::Odometry>(robot_pose_topic,
+                                              100,
+                                              &preprocess::poseCallback,
+                                              this);
+
   pcl_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_steps, 1000);
   box_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_bounding_box, 1000);
   hypothesis_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> > (step_maybe, 1000);
   vertical_step_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_vertical, 1000);
 
-   vertical = false;
+  vertical = false;
  
 }
  
 preprocess::~preprocess()
 {}
+
+/**
+ * @brief Callback function for robot pose, used to dynamically filter a region around the robot
+ * @param Odometry msg
+ */
+void preprocess::poseCallback(const nav_msgs::Odometry::ConstPtr &msg)
+{
+
+  if(!verbose)
+    ROS_ERROR("New robot pose received");
+  try
+  {
+    robot_pose.pose.pose.position = msg->pose.pose.position;
+  }
+  catch ( ros::Exception &e )
+  {
+    ROS_ERROR("_preprocess_:Error occured in pose subscription: %s ", e.what());
+  }
+}
 
 /**
  * @brief Callback function for laser data
@@ -266,25 +295,28 @@ void preprocess::preprocessScene()
   //////////////////////////////////////////////
   //PassThrough Filtering x(-6:6) y(-6:6) z(0:4)
   //////////////////////////////////////////////
-  //TODO : Passthrough filter "around" the robot and not the absolute scene
-  double z = -1.0;
+  double x = robot_pose.pose.pose.position.x;
+  double y = robot_pose.pose.pose.position.y;
+  double z = robot_pose.pose.pose.position.z;
+
+  dummy.x =x;dummy.y=y;dummy.z=z;
+
   cloud_copy->operator +=(*raw_cloud);
   pass.setInputCloud (cloud_copy);
   pass.setFilterFieldName ("z");
-  pass.setFilterLimits (z, z+4.0);
+  pass.setFilterLimits (z-2.0, z+2.0);
   pass.filter (*plane_cloud);
 
   pass.setInputCloud (plane_cloud);
   pass.setFilterFieldName ("x");
-  pass.setFilterLimits (-6.0, 6.0);
+  pass.setFilterLimits (x-4.0, x+4.0);
   pass.filter (*plane_cloud);
 
   pass.setInputCloud (plane_cloud);
   pass.setFilterFieldName ("y");
-  pass.setFilterLimits (-6.0, 6.0);
+  pass.setFilterLimits (y-4.0, y+4.0);
   pass.filter (*plane_cloud);
   raw_cloud->swap(*plane_cloud);
-  dummy.x =0;dummy.y=0;dummy.z=0;
 //  viewCloud(raw_cloud, dummy);
   passThrough(raw_cloud, z, true);
 }

@@ -3,8 +3,8 @@ step_maybe_topic: "/staircase_detection/steps_centroid"
 output_steps_topic: "/staircase_detection/pointcloud/steps"
 step_bounding_box_topic: "/staircase_detection/pointcloud/bounding_box"
 step_vertical_topic: "/staircase_detection/pointcloud/step_vertical"
-robot_pose_topic: "/robotcontrol/odometry/pose/pose/position"
-robot_orientation_topic: "/robotcontrol/odometry/pose/pose/orientation"
+robot_pose_topic: "/robotcontrol/odometry"
+
 extract_bool: true
 verbose: false
 
