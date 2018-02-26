@@ -155,7 +155,7 @@ public:
   void removeTopStep(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud);
   void passThrough_vertical(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double z, bool horizontal);
 
-  void findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
+  void findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double lower_height);
 
   bool checkLength(std::vector<double> vertices, std::vector<double>* step_params);
   bool getStairParams(double height);
@@ -214,7 +214,6 @@ preprocess::preprocess() : nh_private("~")
   vertical_step_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_vertical, 1000);
 
   vertical = false;
- 
 }
  
 preprocess::~preprocess()
@@ -304,21 +303,21 @@ void preprocess::preprocessScene()
   cloud_copy->operator +=(*raw_cloud);
   pass.setInputCloud (cloud_copy);
   pass.setFilterFieldName ("z");
-  pass.setFilterLimits (z-2.0, z+2.0);
+  pass.setFilterLimits (z-6.0, z+6.0);
   pass.filter (*plane_cloud);
 
   pass.setInputCloud (plane_cloud);
   pass.setFilterFieldName ("x");
-  pass.setFilterLimits (x-4.0, x+4.0);
+  pass.setFilterLimits (x-6.0, x+6.0);
   pass.filter (*plane_cloud);
 
   pass.setInputCloud (plane_cloud);
   pass.setFilterFieldName ("y");
-  pass.setFilterLimits (y-4.0, y+4.0);
+  pass.setFilterLimits (y-6.0, y+6.0);
   pass.filter (*plane_cloud);
   raw_cloud->swap(*plane_cloud);
 //  viewCloud(raw_cloud, dummy);
-  passThrough(raw_cloud, z-2.0, true);
+  passThrough(raw_cloud, z-6.0, true);
 }
 
 /**
@@ -327,7 +326,7 @@ void preprocess::preprocessScene()
  * @param double height
  * @param bool swap_or_not
  */
-void preprocess::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double z, bool horizontal)
+void preprocess::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double z, bool find_horizontal)
 {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_copy (new pcl::PointCloud<pcl::PointXYZRGB>);
   plane_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -337,52 +336,58 @@ void preprocess::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, doub
   cloud_copy->operator +=(*cloud);
   pass.setInputCloud (cloud_copy);
   pass.setFilterFieldName ("z");
-  pass.setFilterLimits (z, z+0.2);
-  pass.filter (*plane_cloud);
+
+  do{
+    pass.setFilterLimits (z, z+0.2);
+    pass.filter (*plane_cloud);
+    z = z+0.2;
+  }while(plane_cloud->points.size()==0);
+
+//  viewCloud(plane_cloud, dummy);
 
   /*
    * If bool variable is true, then looking for horizontal planes
    * Else found nothing, need to filter next section and swap cloud
    * and return
    */
-  if(horizontal)
-    findHorizontalPlanes(plane_cloud);
-  if(!horizontal)
+  if(find_horizontal)
+    findHorizontalPlanes(plane_cloud, z);
+  if(!find_horizontal)
     cloud->swap(*plane_cloud);
   return;
 }
 
-/**
- * @brief UNUSED
- * @param cloud
- * @param x
- * @param horizontal
- */
-void preprocess::passThrough_vertical(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double x, bool horizontal)
-{
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_copy (new pcl::PointCloud<pcl::PointXYZRGB>);
-  plane_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
-  pcl::PassThrough<pcl::PointXYZRGB> pass;
-  plane_cloud->header.frame_id = cloud->header.frame_id;
+///**
+// * @brief UNUSED
+// * @param cloud
+// * @param x
+// * @param horizontal
+// */
+//void preprocess::passThrough_vertical(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double x, bool horizontal)
+//{
+//  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_copy (new pcl::PointCloud<pcl::PointXYZRGB>);
+//  plane_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
+//  pcl::PassThrough<pcl::PointXYZRGB> pass;
+//  plane_cloud->header.frame_id = cloud->header.frame_id;
 
-  cloud_copy->operator +=(*cloud);
-  pass.setInputCloud (cloud_copy);
-  pass.setFilterFieldName ("x");
-  pass.setFilterLimits (x, x+search_depth);
-  pass.filter (*plane_cloud);
-  if(horizontal)
-    findHorizontalPlanes(plane_cloud);
-  if(!horizontal)
-    cloud->swap(*plane_cloud);
-  return;
-}
+//  cloud_copy->operator +=(*cloud);
+//  pass.setInputCloud (cloud_copy);
+//  pass.setFilterFieldName ("x");
+//  pass.setFilterLimits (x, x+search_depth);
+//  pass.filter (*plane_cloud);
+//  if(horizontal)
+//    findHorizontalPlanes(plane_cloud);
+//  if(!horizontal)
+//    cloud->swap(*plane_cloud);
+//  return;
+//}
 
 
 /**
  * @brief Main function doing all the fun stuff, find and segment horizontal plaes
  * @param PointCloud cloud
  */
-void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
+void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double lower_height)
 {
 //Get cloud resolution to set RANSAC parameters
 //  float resolution = computeCloudResolution(raw_cloud);
@@ -407,6 +412,8 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
   //Segmentation and plane extraction
   while(plane_cloud->points.size() > 0.01*points_num)
   {
+    ROS_ERROR("Staircase: Inside segmentation while loop");
+
     temp_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
     step_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
     step_cloud->header.frame_id = raw_cloud->header.frame_id;
@@ -416,7 +423,8 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
     pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
     seg.setInputCloud(plane_cloud);
     seg.segment(*inliers, *coefficients);
-    if(verbose) ROS_INFO("Staircase: Segmented Plane - Inliers size =%d", (int) inliers->indices.size());
+
+    ROS_ERROR("Staircase: Segmented Plane - Inliers size =%d", (int) inliers->indices.size());
     if(inliers->indices.size() ==0)
     {
       ROS_ERROR("Staircase :No inliers, could not find a plane perpendicular to Z-axis");
@@ -434,6 +442,7 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
     double c = coefficients->values[2];
     double d = coefficients->values[3];
     double height = (-d/c);
+    ROS_ERROR("Height: %f", height);
 
     //If plane is too big => floor/drivable, if plane too small => outlier
     if(temp_size <10000 && temp_size>500)
@@ -453,9 +462,9 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
     if(step_cloud->points.size() !=0)
       removeOutliers(step_cloud, height);
     else
-      passThrough(raw_cloud, height+0.2, true);
-
+      passThrough(raw_cloud, lower_height+0.2, true);
 //    ROS_ERROR("Plane Coeff a=%f b=%f c=%f d=%f", coefficients->values[0],coefficients->values[1],coefficients->values[2],coefficients->values[3] );
+
   }
 }
 
@@ -485,7 +494,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
   ec.setSearchMethod (tree);
   ec.setInputCloud (cloud);
   ec.extract (cluster_indices);
-  if(!verbose) ROS_INFO("cluster indices size %d", cluster_indices.size());
+  if(verbose) ROS_INFO("cluster indices size %d", cluster_indices.size());
   clustering_iteration++;
   step_count = 0;
 
@@ -764,7 +773,7 @@ int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &st
       {
         return -2;
       }
-
+      
       // within one step separation of an existing step
       // and height is one step apart
       if( diff < 0.15 && height<0.3 && height>0.08)
@@ -774,8 +783,6 @@ int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &st
 
       // within two step separation of an existing step and
       // height is two steps apart
-//      ROS_WARN("two steps apart diff=%f",std::fabs(diff-ideal));
-//      ROS_WARN("two steps apart height=%f",std::fabs(height-0.6));
       if(std::fabs(diff-ideal)<0.15 && std::fabs(height-0.6)<0.15)
       {
         return i;
@@ -1024,7 +1031,7 @@ bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* 
   edge[5] = computeDistance(coord_2, coord_3);
 
   std::sort(edge, edge+6);
-  if(!verbose)
+  if(verbose)
   {
     ROS_INFO("         edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
     if (vertical) ROS_INFO("vertical edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
