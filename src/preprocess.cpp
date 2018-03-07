@@ -165,7 +165,7 @@ public:
 
   void findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double lower_height);
 
-  bool checkLength(std::vector<double> vertices, std::vector<double>* step_params);
+  bool checkLength(std::vector<double> vertices, std::vector<double>* step_params, double height);
   bool getStairParams(double height);
   bool normalDotProduct(pcl::ModelCoefficients::Ptr &coefficients ,Eigen::Vector3f axis);
 
@@ -206,8 +206,8 @@ preprocess::preprocess() : nh_private("~")
   nh_private.param("step_depth", step_depth, 0.25);
   nh_private.param("voxel_leaf", voxel_leaf, 0.04);
   nh_private.param("acceptable_step_height", step_height, 0.30);
-  nh_private.param("sensor_height_offset", sensor_height_offset, 0);
-  nh_private.param("sensor_plane_offset", sensor_plane_offset, 0);
+  nh_private.param("sensor_height_offset", sensor_height_offset, 0.0);
+  nh_private.param("sensor_plane_offset", sensor_plane_offset, 0.0);
 
 //  nh_private.param("distance_threshold", distance_threshold);
  
@@ -673,21 +673,21 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
  */
 double preprocess::computeStepDepth(double x_mid, double y_mid, double first_step_height)
 {
-  double step_vertical_distance = std::fabs(first_step_height)+sensor_height;
+  double step_vertical_distance = std::fabs(first_step_height)+ sensor_height_offset;
   double step_horizontal_distance = std::sqrt(std::pow(x_mid,2)+std::pow(y_mid,2)) - sensor_plane_offset;
+  double theta = atan2(step_vertical_distance, step_horizontal_distance);
+  double result  = step_height/std::tan(theta);
+//  int step_number = 0;
+//  double theta = atan2((fabs(first_step_height) + step_number*step_height),(step_number*step_depth));
+//  double result = step_depth - step_height/tan(theta);
 
-  double theta = atan2((fabs(first_step_height) + step_number*step_height),(step_number*step_depth));
-  double result = step_depth - step_height/tan(theta);
-
-  ROS_INFO("theta      =%f", theta*180/PI);
-  ROS_INFO("tan(theta) =%f", tan(theta));
-  ROS_INFO("step depth =%f", step_depth);
-  ROS_INFO("step height=%f", step_height);
+//  ROS_INFO("theta      =%f", theta*180/PI);
+//  ROS_INFO("tan(theta) =%f", tan(theta));
+//  ROS_INFO("step depth =%f", step_depth);
+//  ROS_INFO("step height=%f", step_height);
 
 //  ROS_INFO("step number: %f", step_number);
 //  ROS_INFO("theta of step: %f",theta*180/PI);
-
-
   ros::Duration(2).sleep();
   return result;
 }
@@ -864,6 +864,7 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
   std::vector<double> coords;
   valid_step = false;
   vertical = _vertical;
+  double z;
 
   // Find coordinates of the 4 vertices of the step
   if (!vertical)
@@ -878,7 +879,6 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
     if(verbose)
       ROS_ERROR("cluster size %d",cloud->width);
 
-    double z;
     for(it = cloud->begin(); it != cloud->end(); it++)
     {
       //    ROS_INFO("min_x, current x %f %f",min_x, it->x);
@@ -908,12 +908,12 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
     }
     for(it = cloud->begin(); it != cloud->end(); it++)
     {
+      z = it->z;
       if(max_y < it->y)
       {
         max_y = it->y;
         x_max_y = it->x;
       }
-      z = it->z;
     }
     coords.push_back(min_x);
     coords.push_back(y_min_x);
@@ -926,7 +926,7 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
     if(verbose)
     {
   //  ROS_INFO("Intended Coordinates of box (%f,%f)",coords[0],coords[1]);
-//    ROS_INFO("Intended Coordinates(%f,%f,%f)",min_x,y_min_x, z);
+//    ROS_INFO("Intended Coordinates(%f,%f,%f)",min_x,y_min_x);
   //  ROS_INFO("Intended Coordinates of box (%f,%f)",coords[2],coords[3]);
 //    ROS_INFO("Intended Coordinates(%f,%f)",x_min_y,min_y);
   //  ROS_INFO("Intended Coordinates of box (%f,%f)",coords[4],coords[5]);
@@ -982,6 +982,7 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
         max_y = it->y;
         z_max_y = it->z;
       }
+      z = it->z;
     }
 
     coords.push_back(min_z);
@@ -1009,7 +1010,7 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
 //  ROS_INFO("Max Pair (%f,%f)",max_z, max_y);
 
   // Check if the step dimensions are acceptable
-  valid_step = checkLength(coords, step_params);
+  valid_step = checkLength(coords, step_params, z);
   return valid_step;
 }
 
@@ -1037,7 +1038,7 @@ double preprocess::computeDistance(std::vector<double> a, std::vector<double> b)
  * @param step_params
  * @return bool valid_step
  */
-bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* step_params)
+bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* step_params, double height)
 {
   double edge[6];
   bool valid_step = false;
@@ -1064,7 +1065,7 @@ bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* 
   edge[5] = computeDistance(coord_2, coord_3);
 
   std::sort(edge, edge+6);
-  if(!verbose)
+  if(verbose)
   {
     ROS_INFO("Edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
 
@@ -1079,21 +1080,23 @@ bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* 
 //  double x_length = std::abs(vertices[0]-vertices[2]);
 //  double y_length = std::abs(vertices[1]-vertices[3]);
 
-  //TODO method to get first step height
+  //TODO method to get first step heightg
   //Calculate visible step depth
-  first_step_height = -0.87;
+//  first_step_height = -0.87;
   double x_mid = (coord_0[0]+coord_1[0]+coord_2[0]+coord_3[0])/4;
   double y_mid = (coord_0[1]+coord_1[1]+coord_2[1]+coord_3[1])/4;
-  double visible_step_depth = computeStepDepth(x_mid, y_mid, first_step_height);
-  ROS_INFO("Visible Depth: %f",visible_step_depth);
+  double non_visible_step_depth = computeStepDepth(x_mid, y_mid, height);
+  double estimated_step_depth = non_visible_step_depth + edge[0];
+//  ROS_INFO("Non Visible Depth: %f",non_visible_step_depth);
+  ROS_WARN("Full estimated Step Depth: %f", estimated_step_depth);
 
 
   if (!vertical)
   {
     if(edge[0] != 0)
     {
-//      if(edge[0] >= step_depth && edge[2] >= step_width)
-      if(edge[2] >= step_width)
+      if(estimated_step_depth >= step_depth && edge[2] >= step_width)
+//      if(edge[2] >= step_width)
       {
         step_params->push_back(edge[0]);
         step_params->push_back(edge[2]);
