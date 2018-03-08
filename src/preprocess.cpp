@@ -131,6 +131,7 @@ public:
   double first_step_height;
   double sensor_height_offset;
   double sensor_plane_offset;
+  double sleep_time;
 
   geometry_msgs::Point dummy;
   nav_msgs::Odometry robot_pose;
@@ -208,6 +209,7 @@ preprocess::preprocess() : nh_private("~")
   nh_private.param("acceptable_step_height", step_height, 0.30);
   nh_private.param("sensor_height_offset", sensor_height_offset, 0.0);
   nh_private.param("sensor_plane_offset", sensor_plane_offset, 0.0);
+  nh_private.param("sleep_time", sleep_time, 0.0);
 
 //  nh_private.param("distance_threshold", distance_threshold);
  
@@ -690,7 +692,7 @@ double preprocess::computeStepDepth(double x_mid, double y_mid, double first_ste
 
 //  ROS_INFO("step number: %f", step_number);
 //  ROS_INFO("theta of step: %f",theta*180/PI);
-  ros::Duration(2).sleep();
+//  ros::Duration(2).sleep();
   return result;
 }
 
@@ -800,13 +802,13 @@ int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &st
         ROS_WARN("Stair-%d Step-%d delta threshold=%f delta height=%f",i+1,j+1,diff,height);
         ROS_WARN("               ideal separation=%f actual separation=%f",ideal, actual);
       }
-//      ros::Duration(0.2).sleep();
+      ros::Duration(sleep_time).sleep();
       if(actual<0.05 && height <0.05)
       {
         return -2;
       }
       
-      // within one step separation of an existing step
+      // within 15cm of one step separation of an existing step
       // and height is one step apart
       if( diff < 0.15 && height<0.3 && height>0.08)
       {
@@ -838,13 +840,13 @@ double preprocess::stepDistance(step_metrics &current, step_metrics &previous, d
   double x_diff = std::abs(current.centroid[0]-previous.centroid[0]);
   double y_diff = std::abs(current.centroid[1]-previous.centroid[1]);
 
-  double height_diff = std::abs(current.centroid[2]-previous.centroid[2]);
+  double height_diff = std::fabs(current.centroid[2]-previous.centroid[2]);
   double planar_diff = std::sqrt(std::pow(x_diff,2)+ std::pow(y_diff,2) );
 
   double distance = std::sqrt (std::pow(planar_diff,2) + std::pow(height_diff,2) );
   double ideal_step_separtion = std::sqrt (std::pow(current.depth,2) + std::pow(step_height,2) );
 
-  double threshold =std::abs(distance-ideal_step_separtion);
+  double threshold =std::fabs(distance-ideal_step_separtion);
 //  ROS_ERROR("actual %f", distance);
 //  ROS_ERROR("ideal %f", ideal_step_separtion);
 //  ROS_ERROR("threshold distance %f", threshold);

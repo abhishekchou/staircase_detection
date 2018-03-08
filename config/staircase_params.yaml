@@ -7,6 +7,7 @@ robot_pose_topic: "/robotcontrol/odometry"
 
 extract_bool: true
 verbose: false
+sleep_time: 0.0
 
 #parameters are all in centimeters
 voxel_leaf: 0.04
@@ -17,4 +18,5 @@ cluster_tolerance: 0.1
 acceptable_step_height: 0.3
 sensor_height_offset: 1.622
 sensor_plane_offset: 0.2
+
 
