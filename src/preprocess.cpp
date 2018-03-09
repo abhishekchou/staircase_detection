@@ -562,14 +562,16 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
             (ii)  New Step in Existing Staircase, and
             (iii) New Staircase
         */
+
         int index = getStairIndex(temp_step, staircase);
-        if (index == -2 && verbose)
+//        box_pub.publish(cloud_cluster);
+        if (index == -2 && !verbose)
         {
           ROS_WARN("Adding to nothing, seen this before");
         }
         if (index == -1)
         {
-          if(verbose){ROS_WARN("Adding new staircase");
+          if(!verbose){ROS_WARN("Adding new staircase");
           ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);}
           //put in new stair
           stair temp_stair;
@@ -580,7 +582,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
         }
         if (index >=0)
         {
-          if(verbose){ROS_WARN("Adding to old staircase");
+          if(!verbose){ROS_WARN("Adding to old staircase");
           ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);}
           //add to staircase at index
           //TODO Check dot product before adding to staircase list
@@ -631,39 +633,38 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
     }
   }
 
-  ROS_WARN("Checking vertical correspondences now");
-//  Check vertical correspondences
-//  for(size_t i=0;i<staircase.size();++i)
-//  {
-//    if(staircase[i].steps.size()>=2)
-//    {
-//      staircase_detection::centroid_list msg;
-//      geometry_msgs::Point cent;
-//      for(size_t j=0;j<staircase[i].steps.size();++j)
-//      {
-//        //call vertical stuff on this staircase
-//        cent.x = staircase[i].steps[j].centroid[0];
-//        cent.y = staircase[i].steps[j].centroid[1];
-//        cent.z = staircase[i].steps[j].centroid[2];
-//        msg.centroids.push_back(cent);
-//        if(verbose) ROS_WARN("centroids to verical (%f,%f,%f)",cent.x, cent.y, cent.z);
-//      }
-//      search_depth = staircase[i].steps[0].depth;
-////      viewCloud(staircase[i].stair_cloud, cent);
-//      staircase[i].stair_cloud->header.frame_id = raw_cloud->header.frame_id;
-//      box_pub.publish(staircase[i].stair_cloud);
-//      //Find vertical planes and validate hypothesis
-//      if(validateSteps(msg))
-//      {
-//         ROS_ERROR("Staircase %d of %d at (%f,%f,%f)",
-//                   i+1,staircase.size(),
-//                   msg.centroids.at(0).x,
-//                   msg.centroids.at(0).y,
-//                   msg.centroids.at(0).z);
-////         ros::Duration(1).sleep();
-//      }
-//    }
-//  }
+  // Checking vertical correspondences now
+ /* for(size_t i=0;i<staircase.size();++i)
+  {
+    if(staircase[i].steps.size()>=2)
+    {
+      staircase_detection::centroid_list msg;
+      geometry_msgs::Point cent;
+      for(size_t j=0;j<staircase[i].steps.size();++j)
+      {
+        //call vertical stuff on this staircase
+        cent.x = staircase[i].steps[j].centroid[0];
+        cent.y = staircase[i].steps[j].centroid[1];
+        cent.z = staircase[i].steps[j].centroid[2];
+        msg.centroids.push_back(cent);
+        if(verbose) ROS_WARN("centroids to verical (%f,%f,%f)",cent.x, cent.y, cent.z);
+      }
+      search_depth = staircase[i].steps[0].depth;
+//      viewCloud(staircase[i].stair_cloud, cent);
+      staircase[i].stair_cloud->header.frame_id = raw_cloud->header.frame_id;
+      box_pub.publish(staircase[i].stair_cloud);
+      //Find vertical planes and validate hypothesis
+      if(validateSteps(msg))
+      {
+         ROS_ERROR("Staircase %d of %d at (%f,%f,%f)",
+                   i+1,staircase.size(),
+                   msg.centroids.at(0).x,
+                   msg.centroids.at(0).y,
+                   msg.centroids.at(0).z);
+//         ros::Duration(1).sleep();
+      }
+    }
+  }*/
   passThrough(raw_cloud, height-0.05, true);
   return;
 }
@@ -802,7 +803,7 @@ int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &st
         ROS_WARN("Stair-%d Step-%d delta threshold=%f delta height=%f",i+1,j+1,diff,height);
         ROS_WARN("               ideal separation=%f actual separation=%f",ideal, actual);
       }
-      ros::Duration(sleep_time).sleep();
+      ros::Duration(sleep_time ).sleep();
       if(actual<0.05 && height <0.05)
       {
         return -2;
@@ -1099,10 +1100,12 @@ bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* 
   {
     if(edge[0] != 0)
     {
-      if(estimated_step_depth >= step_depth && edge[2] >= step_width)
+      if(edge[0] >= step_depth && edge[2] >= step_width)
+//      if(estimated_step_depth >= step_depth && edge[2] >= step_width)
 //      if(edge[2] >= step_width)
       {
-        step_params->push_back(estimated_step_depth);
+//        step_params->push_back(estimated_step_depth);
+        step_params->push_back(edge[0]);
         step_params->push_back(edge[2]);
         valid_step = true;
         ROS_ERROR("This is okay");
@@ -1190,8 +1193,8 @@ bool preprocess::validateSteps(staircase_detection::centroid_list msg)
 
   // Compute orientation of staircase hypothesis
   double theta = std::atan2((b.y-a.y),(b.x-a.x));
-  double phi = std::atan2((a.y),(a.x));
-  double x_intercept = -(std::tan(theta))*a.x;
+//  double phi = std::atan2((a.y),(a.x));
+//  double x_intercept = -(std::tan(theta))*a.x;
 
   // Rotated position of centroids to align with x/y axis (for passthrough filter)
   rotated_a.y = 0; rotated_a.z = a.z;
@@ -1341,7 +1344,6 @@ bool preprocess::validateSteps(staircase_detection::centroid_list msg)
         vertical_step_pub.publish(vertical_step_cloud);
       }
     }
-
     //All points except those in the found plane
     temp_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
     extract.setInputCloud(filtered_cloud);
