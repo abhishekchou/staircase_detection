@@ -1113,7 +1113,7 @@ bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<dou
   double non_visible_step_depth = computeStepDepth(x_mid, y_mid, height);
   double estimated_step_depth = non_visible_step_depth + edge[0];
 //  ROS_INFO("Non Visible Depth: %f",non_visible_step_depth);
-  ROS_WARN("Full estimated Step Depth: %f", estimated_step_depth);
+//  ROS_WARN("Full estimated Step Depth: %f", estimated_step_depth);
 
 
   if (!vertical)
@@ -1122,7 +1122,6 @@ bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<dou
     {
       if(edge[0] >= step_depth && edge[2] >= step_width)
 //      if(estimated_step_depth >= step_depth && edge[2] >= step_width)
-//      if(edge[2] >= step_width)
       {
 //        step_params->push_back(estimated_step_depth);
         step_params->push_back(edge[0]);
