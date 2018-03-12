@@ -96,11 +96,11 @@ struct stair
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr stair_cloud;
 };
  
-class preprocess
+class staircase_detect
 {
 public:
-  preprocess();
-  ~preprocess();
+  staircase_detect();
+  ~staircase_detect();
 
   std::vector<std::vector<step_metrics> > steps;
   std::vector<step_metrics> temp_step_vector;
@@ -188,7 +188,7 @@ private:
  
 };
  
-preprocess::preprocess() : nh_private("~")
+staircase_detect::staircase_detect() : nh_private("~")
 {
   //Load params form YAML input
   nh_private.getParam("input_cloud_topic", input_cloud);
@@ -215,11 +215,11 @@ preprocess::preprocess() : nh_private("~")
  
   pcl_sub = nh.subscribe<sensor_msgs::PointCloud2>(input_cloud,
                                                    1000,
-                                                   &preprocess::laserCallback,
+                                                   &staircase_detect::laserCallback,
                                                    this);
   pose_sub = nh.subscribe<nav_msgs::Odometry>(robot_pose_topic,
                                               100,
-                                              &preprocess::poseCallback,
+                                              &staircase_detect::poseCallback,
                                               this);
 
   pcl_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_steps, 1000);
@@ -230,14 +230,14 @@ preprocess::preprocess() : nh_private("~")
   vertical = false;
 }
  
-preprocess::~preprocess()
+staircase_detect::~staircase_detect()
 {}
 
 /**
  * @brief Callback function for robot pose, used to dynamically filter a region around the robot
  * @param Odometry msg
  */
-void preprocess::poseCallback(const nav_msgs::Odometry::ConstPtr &msg)
+void staircase_detect::poseCallback(const nav_msgs::Odometry::ConstPtr &msg)
 {
 
   if(!verbose)
@@ -256,7 +256,7 @@ void preprocess::poseCallback(const nav_msgs::Odometry::ConstPtr &msg)
  * @brief Callback function for laser data
  * @param sensor_msgs::PointCloud2
  */
-void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
+void staircase_detect::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
 {
   if(verbose)
   {
@@ -282,7 +282,7 @@ void preprocess::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
  *        to limit search region
  * @param None
  */
-void preprocess::preprocessScene()
+void staircase_detect::preprocessScene()
 {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
   std::vector<int> indices;
@@ -342,7 +342,7 @@ void preprocess::preprocessScene()
  * @param double height
  * @param bool swap_or_not
  */
-void preprocess::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double z, bool find_horizontal)
+void staircase_detect::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, double z, bool find_horizontal)
 {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_copy (new pcl::PointCloud<pcl::PointXYZRGB>);
   plane_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -384,7 +384,7 @@ void preprocess::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, doub
  * @brief Main function doing all the fun stuff, find and segment horizontal plaes
  * @param PointCloud cloud
  */
-void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double current_height)
+void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double current_height)
 {
 //Get cloud resolution to set RANSAC parameters
 //  float resolution = computeCloudResolution(raw_cloud);
@@ -474,7 +474,7 @@ void preprocess::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZRGB>::C
  * @param POintCloud::ConstPtr cloud
  * @param double height
  */
-void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double height)
+void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, double height)
 {
 
   // Creating the KdTree object for the search method
@@ -676,7 +676,7 @@ void preprocess::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPt
  * @param first_step_height
  * @return visible_depth
  */
-double preprocess::computeStepDepth(double x_mid, double y_mid, double first_step_height)
+double staircase_detect::computeStepDepth(double x_mid, double y_mid, double first_step_height)
 {
   double step_vertical_distance = std::fabs(first_step_height)+ sensor_height_offset;
   double step_horizontal_distance = std::sqrt(std::pow(x_mid,2)+std::pow(y_mid,2)) - sensor_plane_offset;
@@ -698,11 +698,11 @@ double preprocess::computeStepDepth(double x_mid, double y_mid, double first_ste
 }
 
 /**
- * @brief preprocess::removeOutliers_vertical
+ * @brief staircase_detect::removeOutliers_vertical
  * @param PointCloud with vertical planes
  * @return bool removed_outliers
  */
-bool preprocess::removeOutliers_vertical(pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_cluster)
+bool staircase_detect::removeOutliers_vertical(pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_cluster)
 {
   // Creating the KdTree object for the search method
 //  pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_staircase_cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -789,7 +789,7 @@ bool preprocess::removeOutliers_vertical(pcl::PointCloud<pcl::PointXYZRGB>::Ptr 
  * @param vector<step_metrics> stairs
  * @return int index
  */
-int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &stairs)
+int staircase_detect::getStairIndex(step_metrics &current_step, std::vector<stair> &stairs)
 {
   for(size_t i=0;i<stairs.size();++i)
   {
@@ -836,7 +836,7 @@ int preprocess::getStairIndex(step_metrics &current_step, std::vector<stair> &st
  * @param double actual_distance
  * @return double threshold
  */
-double preprocess::stepDistance(step_metrics &current, step_metrics &previous, double &ideal, double &actual)
+double staircase_detect::stepDistance(step_metrics &current, step_metrics &previous, double &ideal, double &actual)
 {
   double x_diff = std::abs(current.centroid[0]-previous.centroid[0]);
   double y_diff = std::abs(current.centroid[1]-previous.centroid[1]);
@@ -864,7 +864,7 @@ double preprocess::stepDistance(step_metrics &current, step_metrics &previous, d
  * @param bool _isvertical
  * @return
  */
-bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,std::vector<double>* step_params, bool _vertical)
+bool staircase_detect::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,std::vector<double>* step_params, bool _vertical)
 {
   std::vector<double> coords;
   valid_step = false;
@@ -1026,7 +1026,7 @@ bool preprocess::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
  * @param vector b
  * @return double distance
  */
-double preprocess::computeDistance(std::vector<double> a, std::vector<double> b)
+double staircase_detect::computeDistance(std::vector<double> a, std::vector<double> b)
 {
   double x1,y1,x2,y2;
   x1 = a[0];
@@ -1043,7 +1043,7 @@ double preprocess::computeDistance(std::vector<double> a, std::vector<double> b)
  * @param step_params
  * @return bool valid_step
  */
-bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* step_params, double height)
+bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<double>* step_params, double height)
 {
   double edge[6];
   bool valid_step = false;
@@ -1139,11 +1139,11 @@ bool preprocess::checkLength(std::vector<double> vertices, std::vector<double>* 
 }
 
 /**
- * @brief preprocess::getStairParams
+ * @brief staircase_detect::getStairParams
  * @param height
  * @return
  */
-bool preprocess::getStairParams(double height)
+bool staircase_detect::getStairParams(double height)
 {
   std::vector<double> a, b;
   a.push_back(centroid_x.at(0));
@@ -1183,7 +1183,7 @@ bool preprocess::getStairParams(double height)
  * @param list of centroids
  * @return bool hypoth_validated
  */
-bool preprocess::validateSteps(staircase_detection::centroid_list msg)
+bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
 {
   // For centroids of bottom two steps in a staircase
   geometry_msgs::Point a,b;
@@ -1361,7 +1361,7 @@ bool preprocess::validateSteps(staircase_detection::centroid_list msg)
  * @param Reference axis
  * @return bool normal
  */
-bool preprocess::normalDotProduct(pcl::ModelCoefficients::Ptr &coefficients ,Eigen::Vector3f axis)
+bool staircase_detect::normalDotProduct(pcl::ModelCoefficients::Ptr &coefficients ,Eigen::Vector3f axis)
 {
   double dot_product;
   double norm = std::sqrt(std::pow(coefficients->values[0],2) +
@@ -1399,7 +1399,7 @@ bool preprocess::normalDotProduct(pcl::ModelCoefficients::Ptr &coefficients ,Eig
  * @brief Find topmost step in a staircase and remove from hypothesis, often drivable
  * @param cloud
  */
-void preprocess::removeTopStep(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud)
+void staircase_detect::removeTopStep(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud)
 {
   // Segmentation object creation
   pcl::SACSegmentation<pcl::PointXYZRGB> seg;
@@ -1464,7 +1464,7 @@ void preprocess::removeTopStep(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud)
 /**
  * @brief Remove all large planes perpendicular to the floor - walls
  */
-void preprocess::removeWalls()
+void staircase_detect::removeWalls()
 {
   //Define Axis perpendicular to normals on walls/surfaces to filter out
   pcl::Normal _axis;
@@ -1510,7 +1510,7 @@ void preprocess::removeWalls()
  * @param cloud
  * @return resolution
  */
-double preprocess::computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
+double staircase_detect::computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud)
 {
   double res = 0.0;
   int n_points = 0;
@@ -1544,7 +1544,7 @@ double preprocess::computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRG
 /**
  * @brief PCL Visualiser to view pointclouds and results outside RVIZ
  */
-void preprocess::viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, geometry_msgs::Point msg, std::string descriptor)
+void staircase_detect::viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, geometry_msgs::Point msg, std::string descriptor)
 {
   pcl::visualization::PCLVisualizer viewer ("Output");
 //  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
@@ -1606,10 +1606,10 @@ void preprocess::viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cl
 
 int main(int argc, char **argv)
 {
-  ros::init(argc, argv, "preprocess");
+  ros::init(argc, argv, "staircase_detect");
   ros::NodeHandle nh;
  
-  preprocess pr;
+  staircase_detect pr;
 
   while(ros::ok())
     ros::spinOnce();
