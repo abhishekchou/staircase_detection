@@ -132,6 +132,7 @@ public:
   double sensor_height_offset;
   double sensor_plane_offset;
   double sleep_time;
+  double max_range;
 
   geometry_msgs::Point dummy;
   nav_msgs::Odometry robot_pose;
@@ -196,7 +197,7 @@ staircase_detect::staircase_detect() : nh_private("~")
   nh_private.getParam("input_cloud_topic", input_cloud);
   nh_private.getParam("output_steps_topic", output_steps);
   nh_private.getParam("step_maybe_topic", step_maybe);
-  nh_private.getParam("step_bounding_box_topic", step_bounding_box);
+  nh_private.getParam("step_horizontal_topic", step_bounding_box);
   nh_private.getParam("step_vertical_topic", step_vertical);
   nh_private.getParam("extract_bool", extract_bool);
   nh_private.getParam("robot_pose_topic", robot_pose_topic);
@@ -212,6 +213,7 @@ staircase_detect::staircase_detect() : nh_private("~")
   nh_private.param("sensor_height_offset", sensor_height_offset, 0.0);
   nh_private.param("sensor_plane_offset", sensor_plane_offset, 0.0);
   nh_private.param("sleep_time", sleep_time, 0.0);
+  nh_private.param("perception_range", max_range, 6.0);
 
 //  nh_private.param("distance_threshold", distance_threshold);
  
@@ -219,10 +221,10 @@ staircase_detect::staircase_detect() : nh_private("~")
                                                    1000,
                                                    &staircase_detect::laserCallback,
                                                    this);
-  pose_sub = nh.subscribe<nav_msgs::Odometry>(robot_pose_topic,
-                                              100,
-                                              &staircase_detect::poseCallback,
-                                              this);
+//  pose_sub = nh.subscribe<nav_msgs::Odometry>(robot_pose_topic,
+//                                              100,
+//                                              &staircase_detect::poseCallback,
+//                                              this);
 
   pcl_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_steps, 1000);
   box_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_bounding_box, 1000);
@@ -260,7 +262,7 @@ void staircase_detect::poseCallback(const nav_msgs::Odometry::ConstPtr &msg)
  */
 void staircase_detect::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg)
 {
-  if(verbose)
+  if(!verbose)
   {
     ROS_INFO("Received new point cloud");
     wall_removed = false;
@@ -277,6 +279,7 @@ void staircase_detect::laserCallback(const sensor_msgs::PointCloud2ConstPtr &msg
   preprocessScene();
   //if new scene, will contain walls
   wall_removed = false;
+  return;
 }
 
 /**
@@ -319,23 +322,24 @@ void staircase_detect::preprocessScene()
   cloud_copy->operator +=(*raw_cloud);
   pass.setInputCloud (cloud_copy);
   pass.setFilterFieldName ("z");
-  pass.setFilterLimits (z-6.0, z+6.0);
+  pass.setFilterLimits (z-max_range, z+max_range);
   pass.filter (*plane_cloud);
 
   pass.setInputCloud (plane_cloud);
   pass.setFilterFieldName ("x");
-  pass.setFilterLimits (x-6.0, x+6.0);
+  pass.setFilterLimits (x-max_range, x+max_range);
   pass.filter (*plane_cloud);
 
   pass.setInputCloud (plane_cloud);
   pass.setFilterFieldName ("y");
-  pass.setFilterLimits (y-6.0, y+6.0);
+  pass.setFilterLimits (y-max_range, y+max_range);
   pass.filter (*plane_cloud);
   raw_cloud->swap(*plane_cloud);
   descriptor = "preprocess";
 //  viewCloud(raw_cloud, dummy, descriptor);
 //  passThrough(raw_cloud, z-6.0, true);
   passThrough(raw_cloud, z, true);
+  return;
 }
 
 /**
@@ -350,6 +354,8 @@ void staircase_detect::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud
   plane_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::PassThrough<pcl::PointXYZRGB> pass;
   plane_cloud->header.frame_id = cloud->header.frame_id;
+  int filter_counter =0;
+  bool all_done = false;
 
   cloud_copy->operator +=(*cloud);
   pass.setInputCloud (cloud_copy);
@@ -357,13 +363,17 @@ void staircase_detect::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud
 //  pass.setFilterLimits (z-0.2, z);
 //  pass.filter (*plane_cloud);
 
-  do{
+  do
+  {
+    filter_counter++;
+    if(filter_counter>=10)
+      all_done = true;
     if(verbose)
       ROS_ERROR("Filter limits:%f to %f", z-0.2, z);
     pass.setFilterLimits (z-0.2, z);
     pass.filter (*plane_cloud);
     z = z-0.2;
-  }while(plane_cloud->points.size()==0);
+  }while(plane_cloud->points.size()==0 && !all_done);
 
   if(verbose)
     ROS_ERROR("Entered passthrough filter %d", plane_cloud->points.size());
@@ -375,9 +385,9 @@ void staircase_detect::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud
    * Else found nothing, need to filter next section and swap cloud
    * and return
    */
-  if(find_horizontal)
+  if(find_horizontal && !all_done)
     findHorizontalPlanes(plane_cloud, z);
-  if(!find_horizontal)
+  if(!find_horizontal && !all_done)
     cloud->swap(*plane_cloud);
   return;
 }
@@ -449,7 +459,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
     if(temp_size <10000 && temp_size>200)
     {
       step_cloud->operator+=(*temp_cloud);
-      if(!verbose)
+      if(verbose)
         ROS_INFO("Staircase: Planes height = %f Number of points = %d", height, temp_cloud->points.size());
 //      descriptor = "Step Cloud";
 //      viewCloud(step_cloud, dummy, descriptor);
@@ -468,6 +478,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
 //    ROS_ERROR("Plane Coeff a=%f b=%f c=%f d=%f", coefficients->values[0],coefficients->values[1],coefficients->values[2],coefficients->values[3] );
 
   }
+  return;
 }
 
 /**
@@ -569,12 +580,15 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
 //        box_pub.publish(cloud_cluster);
         if (index == -2 && !verbose)
         {
-          ROS_WARN("Adding to nothing, seen this before");
+//          ROS_WARN("Adding to nothing, seen this before");
         }
         if (index == -1)
         {
-          if(!verbose){ROS_WARN("Adding new staircase");
-          ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);}
+          if(verbose)
+          {
+            ROS_WARN("Adding new staircase");
+//            ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);
+          }
           //put in new stair
           stair temp_stair;
           temp_stair.stair_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -584,7 +598,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
         }
         if (index >=0)
         {
-          if(!verbose){ROS_WARN("Adding to old staircase");
+          if(verbose){ROS_WARN("Adding to old staircase");
           ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);}
           //add to staircase at index
           //TODO Check dot product before adding to staircase list
@@ -635,20 +649,16 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
   }
   //Check if robot on(behind) staircase or in front
 
-  ROS_INFO("Staircase Size %d", staircase.size());
 
   // Checking vertical correspondences now
-  for(size_t i=0 ; i<staircase.size();++i)
+  for(size_t i=0 ; i<staircase.size            ();++i)
   {
-    ROS_ERROR("First for loop %d",i);
     if(staircase[i].steps.size()>=2)
     {
       staircase_detection::centroid_list msg;
       geometry_msgs::Point cent;
-      ROS_INFO("Steps in Staircase %d", staircase[i].steps.size());
       for(size_t j=0;j<staircase[i].steps.size();++j)
       {
-        ROS_ERROR("Second for loop %d",j);
         //call vertical stuff on this staircase
         cent.x = staircase[i].steps[j].centroid[0];
         cent.y = staircase[i].steps[j].centroid[1];
@@ -656,22 +666,21 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
         msg.centroids.push_back(cent);
       }
       vertical_planes_visible = robotInFront(msg);
-      ROS_ERROR("Post Cluster stuff now");
       if(vertical_planes_visible)
       {
         search_depth = staircase[i].steps[0].depth;
         //viewCloud(staircase[i].stair_cloud, cent);
-        staircase[i].stair_cloud->header.frame_id = raw_cloud->header.frame_id;
-        box_pub.publish(staircase[i].stair_cloud);
+//        staircase[i].stair_cloud->header.frame_id = raw_cloud->header.frame_id;
+//        box_pub.publish(staircase[i].stair_cloud);
         //Find vertical planes and validate hypothesis
         if(validateSteps(msg))
         {
-          ROS_ERROR("Staircase %d of %d at (%f,%f,%f)",
-                    i+1,staircase.size(),
-                    msg.centroids.at(0).x,
-                    msg.centroids.at(0).y,
-                    msg.centroids.at(0).z);
-          //         ros::Duration(1).sleep();
+//          ROS_ERROR("Staircase %d of %d at (%f,%f,%f)",
+//                    i+1,staircase.size(),
+//                    msg.centroids.at(0).x,
+//                    msg.centroids.at(0).y,
+//                    msg.centroids.at(0).z);
+                   ros::Duration(.001).sleep();
         }
       }
       else
@@ -792,7 +801,7 @@ bool staircase_detect::removeOutliers_vertical(pcl::PointCloud<pcl::PointXYZRGB>
         temp_step.centroid = centroid;
         temp_step.width = vertical_step_params->at(1);
         temp_step.depth = vertical_step_params->at(0);
-        ROS_ERROR("Vertical: Step found at height= %f", centroid[2]);
+//        ROS_ERROR("Vertical: Step found at height= %f", centroid[2]);
         vertical_cluster->operator +=(*vertical_cloud_cluster);
 //        viewCloud(vertical_cluster, dummy);
         return true;
@@ -818,7 +827,7 @@ int staircase_detect::getStairIndex(step_metrics &current_step, std::vector<stai
       double ideal, actual, height, diff;
       diff = stepDistance(current_step, stairs[i].steps[j], ideal, actual);
       height = std::fabs(current_step.centroid[2]-stairs[i].steps[j].centroid[2]);
-      if(!verbose)
+      if(verbose)
       {
         ROS_WARN("Stair-%d Step-%d delta threshold=%f delta height=%f",i+1,j+1,diff,height);
         ROS_WARN("               ideal separation=%f actual separation=%f",ideal, actual);
@@ -1113,7 +1122,7 @@ bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<dou
   double non_visible_step_depth = computeStepDepth(x_mid, y_mid, height);
   double estimated_step_depth = non_visible_step_depth + edge[0];
 //  ROS_INFO("Non Visible Depth: %f",non_visible_step_depth);
-  ROS_WARN("Full estimated Step Depth: %f", estimated_step_depth);
+//  ROS_WARN("Full estimated Step Depth: %f", estimated_step_depth);
 
 
   if (!vertical)
@@ -1122,20 +1131,19 @@ bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<dou
     {
       if(edge[0] >= step_depth && edge[2] >= step_width)
 //      if(estimated_step_depth >= step_depth && edge[2] >= step_width)
-//      if(edge[2] >= step_width)
       {
 //        step_params->push_back(estimated_step_depth);
         step_params->push_back(edge[0]);
         step_params->push_back(edge[2]);
         valid_step = true;
-        ROS_ERROR("This is okay");
+//        ROS_ERROR("This is okay");
       }
       if(edge[0] >= driving_depth)
       {
   //      step_params->push_back(edge[0]);
   //      step_params->push_back(edge[2]);
         valid_step = false;
-        ROS_ERROR("This is drivable");
+//        ROS_ERROR("This is drivable");
       }
     }
   }
@@ -1143,7 +1151,7 @@ bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<dou
   if (vertical)
   {
     double step_height = coord_2[0]-coord_0[0];
-    ROS_WARN("Step Height: %f", step_height);
+//    ROS_WARN("Step Height: %f", step_height);
     if (step_height <= 0.5 && edge[5] >= step_width)
     {
       step_params->push_back(step_height);
@@ -1225,7 +1233,7 @@ bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
   combined.y = (rotated_a.y+rotated_b.y)/2;
   combined.z = (rotated_a.z+rotated_b.z)/2;
 
-  ROS_WARN("Theta = %f",theta);
+//  ROS_WARN("Theta = %f",theta);
   // Rotate staircase pointcloud by theta to align with robot axis
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr aligned_cloud (new pcl::PointCloud<pcl::PointXYZRGB> ());
   Eigen::Affine3f rotate_z = Eigen::Affine3f::Identity();
@@ -1326,7 +1334,7 @@ bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
     }
     if(inliers->indices.size() ==0)
     {
-      ROS_ERROR("Staircase :No inliers, could not find a plane parallel to Z-axis");
+//      ROS_ERROR("Staircase :No inliers, could not find a plane parallel to Z-axis");
       break;
     }
 
@@ -1360,7 +1368,7 @@ bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
         cent.y = centroid[1];
         cent.z = centroid[2];
         vertical_centroid_vector.push_back(cent);
-        ROS_ERROR("VERTICAAAALLLLLL %d", temp_size);
+//        ROS_ERROR("VERTICAAAALLLLLL %d", temp_size);
         vertical_step_pub.publish(vertical_step_cloud);
       }
     }
@@ -1405,11 +1413,14 @@ bool staircase_detect::robotInFront(staircase_detection::centroid_list msg)
   //Lower Step is closer to robot => robot facing front of stair
   if(d_lower<d_higher)
   {
+//    ROS_ERROR("Returning TRUE: Vertical planes visible");
     return true;
-    ROS_INFO("Returning true: Vertical planes visible");
   }
   else
+  {
+//    ROS_ERROR("Returning FALSE: Vertical planes visible");
     return false;
+  }
 }
 
 /**
@@ -1440,12 +1451,12 @@ bool staircase_detect::normalDotProduct(pcl::ModelCoefficients::Ptr &coefficient
 
   if(std::abs(dot_product)>0.7)
   {
-    ROS_WARN("dot product %f", dot_product);
+//    ROS_WARN("dot product %f", dot_product);
     return true;
   }
   else
   {
-    ROS_WARN("nogood dot product %f", dot_product);
+//    ROS_WARN("nogood dot product %f", dot_product);
     return false;
   }
   //TODO Estimate normals on all surfaces
@@ -1513,7 +1524,7 @@ void staircase_detect::removeTopStep(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &clo
   while (!viewer.wasStopped ())
   {
     viewer.spinOnce ();
-    ros::Duration(.01).sleep();
+//    ros::Duration(.01).sleep();
   }
 
 }
@@ -1657,7 +1668,7 @@ void staircase_detect::viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstP
   while (!viewer.wasStopped ())
   {
     viewer.spinOnce ();
-    ros::Duration(.01).sleep();
+//    ros::Duration(.01).sleep();
   }
 }
 
@@ -1667,9 +1678,10 @@ int main(int argc, char **argv)
   ros::NodeHandle nh;
  
   staircase_detect pr;
-
-  while(ros::ok())
+  while (ros::ok())
+  {
     ros::spinOnce();
+  }
 
   return 0;
 }
