@@ -72,9 +72,6 @@
 //typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
 //typedef pcl::PointCloud<pcl::PointXYZRGB> colouredCloud;
  
-//TODO Two diff variables verbose and debug for print statements
-//TODO Bool 'switches' to turn on-off methods
-
 //Bool Params
 bool debug = true;
 bool wall_removed = false;
@@ -107,7 +104,7 @@ public:
   std::vector<stair> staircase;
 
   ros::Subscriber pcl_sub, pose_sub;
-  ros::Publisher pcl_pub, box_pub;
+  ros::Publisher pcl_pub, horizontal_steps;
   ros::Publisher hypothesis_pub;
   ros::Publisher vertical_step_pub;
  
@@ -227,7 +224,7 @@ staircase_detect::staircase_detect() : nh_private("~")
 //                                              this);
 
   pcl_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_steps, 1000);
-  box_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_bounding_box, 1000);
+  horizontal_steps = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_bounding_box, 1000);
   hypothesis_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> > (step_maybe, 1000);
   vertical_step_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_vertical, 1000);
 
@@ -491,7 +488,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
 {
 
   // Creating the KdTree object for the search method
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr staircase_cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr horizontal_steps_cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB>);
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_steps (new pcl::PointCloud<pcl::PointXYZRGB>);
   tree->setInputCloud (cloud);
@@ -552,7 +549,6 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
         }
       }
 
-       // TODO write comment on checkStep function
       //Check step dimentsions and group into staircases
       if(checkStep(cloud_hull, step_params, false))
       {
@@ -577,7 +573,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
     (ii)  New Step in Existing Staircase, and
     (iii) New Staircase  */
         int index = getStairIndex(temp_step, staircase);
-//        box_pub.publish(cloud_cluster);
+//        horizontal_steps.publish(cloud_cluster);
         if (index == -2 && !verbose)
         {
 //          ROS_WARN("Adding to nothing, seen this before");
@@ -601,7 +597,6 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
           if(verbose){ROS_WARN("Adding to old staircase");
           ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);}
           //add to staircase at index
-          //TODO Check dot product before adding to staircase list
           staircase[index].steps.push_back(temp_step);
           staircase[index].stair_cloud->operator +=(*cloud_cluster);
 //          ROS_WARN("Added to old staircase");
@@ -610,8 +605,8 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
       }
 
       //Individual PointClouds with all steps in a staircase
-      staircase_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
-      staircase_cloud->header.frame_id = cloud_cluster->header.frame_id;
+      horizontal_steps_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
+      horizontal_steps_cloud->header.frame_id = cloud_cluster->header.frame_id;
 
       //Change color of step in staircase for easy visualization
       for(size_t i=0;i<staircase.size();++i)
@@ -640,18 +635,18 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
           {
             point.r = 0;point.r = 0;point.b = 255;
           }
-          staircase_cloud->push_back(point);
+          horizontal_steps_cloud->push_back(point);
         }
       }
-      //publish cloud
-      box_pub.publish(staircase_cloud);
+      //publish horizontal steps cloud
+      horizontal_steps.publish(horizontal_steps_cloud);
     }
   }
   //Check if robot on(behind) staircase or in front
 
 
   // Checking vertical correspondences now
-  for(size_t i=0 ; i<staircase.size            ();++i)
+  for(size_t i=0 ; i<staircase.size();++i)
   {
     if(staircase[i].steps.size()>=2)
     {
@@ -671,7 +666,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
         search_depth = staircase[i].steps[0].depth;
         //viewCloud(staircase[i].stair_cloud, cent);
 //        staircase[i].stair_cloud->header.frame_id = raw_cloud->header.frame_id;
-//        box_pub.publish(staircase[i].stair_cloud);
+//        horizontal_steps.publish(staircase[i].stair_cloud);
         //Find vertical planes and validate hypothesis
         if(validateSteps(msg))
         {
@@ -689,7 +684,6 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
       }
     }
   }
-
 
 
   //Passthrough start 5cm lower that where current plane was found
@@ -727,7 +721,7 @@ double staircase_detect::computeStepDepth(double x_mid, double y_mid, double fir
 }
 
 /**
- * @brief staircase_detect::removeOutliers_vertical
+ * @brief Cluster vertical planes to ignore outlier points, call CheckStep to verify dimensions
  * @param PointCloud with vertical planes
  * @return bool removed_outliers
  */
@@ -740,7 +734,6 @@ bool staircase_detect::removeOutliers_vertical(pcl::PointCloud<pcl::PointXYZRGB>
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_cloud_steps (new pcl::PointCloud<pcl::PointXYZRGB>);
   vertical_cloud_steps->header.frame_id = raw_cloud->header.frame_id;
   vertical_cluster->header.frame_id = raw_cloud->header.frame_id;
-
 
 
   //Euclidean clustering to identify false postives
@@ -790,8 +783,6 @@ bool staircase_detect::removeOutliers_vertical(pcl::PointCloud<pcl::PointXYZRGB>
         }
       }
 
-//      box_pub.publish(vertical_cloud_cluster);
-
       if(checkStep(vertical_cloud_hull, vertical_step_params, true))
       {
         //Get stair descriptors
@@ -801,12 +792,9 @@ bool staircase_detect::removeOutliers_vertical(pcl::PointCloud<pcl::PointXYZRGB>
         temp_step.centroid = centroid;
         temp_step.width = vertical_step_params->at(1);
         temp_step.depth = vertical_step_params->at(0);
-//        ROS_ERROR("Vertical: Step found at height= %f", centroid[2]);
         vertical_cluster->operator +=(*vertical_cloud_cluster);
-//        viewCloud(vertical_cluster, dummy);
         return true;
       }
-//      viewCloud(vertical_cluster, dummy);
     }
   }
   return false;
@@ -886,7 +874,7 @@ double staircase_detect::stepDistance(step_metrics &current, step_metrics &previ
 }
 
 /**
- * @brief Given the dimensions of the horizontal plane, check if step is valid in order to localise
+ * @brief Given the dimensions of the horizontal/vertical plane, check if step is valid in order to localise
           search to this area.
  * @param PointCloud cloud
  * @param vector<step_metrics> step_params
@@ -1114,7 +1102,8 @@ bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<dou
 //  double x_length = std::abs(vertices[0]-vertices[2]);
 //  double y_length = std::abs(vertices[1]-vertices[3]);
 
-  //TODO method to get first step heightg
+  //TODO method to get first step height
+  // TODO fix the threshold value, should not be around 8m
   //Calculate visible step depth
 //  first_step_height = -0.87;
   double x_mid = (coord_0[0]+coord_1[0]+coord_2[0]+coord_3[0])/4;
@@ -1213,6 +1202,8 @@ bool staircase_detect::getStairParams(double height)
  */
 bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
 {
+  bool is_vertical = false;
+
   // For centroids of bottom two steps in a staircase
   geometry_msgs::Point a,b;
   geometry_msgs::Point rotated_a, rotated_b, combined;
@@ -1357,6 +1348,8 @@ bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
 
     geometry_msgs::Point cent;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_planes (new pcl::PointCloud<pcl::PointXYZRGB> ());
+
+    //Cluster and remove outliers, check if dimensions are within bounds of prescribed step dimensions
     if (removeOutliers_vertical(temp_cloud, vertical_planes))
     {
       if (normalDotProduct(coefficients, axis) && temp_size >100)
@@ -1370,6 +1363,7 @@ bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
         vertical_centroid_vector.push_back(cent);
 //        ROS_ERROR("VERTICAAAALLLLLL %d", temp_size);
         vertical_step_pub.publish(vertical_step_cloud);
+        is_vertical = true;
       }
     }
     //All points except those in the found plane
@@ -1380,7 +1374,10 @@ bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
     extract.filter(*temp_cloud);
     filtered_cloud->swap(*temp_cloud);
   }
-  return true;
+  if(is_vertical)
+    return true;
+  else
+    return false;
 }
 
 /**
@@ -1459,8 +1456,6 @@ bool staircase_detect::normalDotProduct(pcl::ModelCoefficients::Ptr &coefficient
 //    ROS_WARN("nogood dot product %f", dot_product);
     return false;
   }
-  //TODO Estimate normals on all surfaces
-
 }
 
 /**
@@ -1542,7 +1537,6 @@ void staircase_detect::removeWalls()
   Eigen::Vector4f _ax = _axis.getNormalVector4fMap();
 
   //Estimate normals on all surfaces
-  //TODO: Make faster by normal estimation only on RANSAC planes
   pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal> ne;
   pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB> ());
   pcl::PointCloud<pcl::Normal>::Ptr normals (new pcl::PointCloud<pcl::Normal>);
