@@ -223,10 +223,10 @@ staircase_detect::staircase_detect() : nh_private("~")
 //                                              &staircase_detect::poseCallback,
 //                                              this);
 
-  pcl_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_steps, 1000);
-  horizontal_steps = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_bounding_box, 1000);
-  hypothesis_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> > (step_maybe, 1000);
-  vertical_step_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_vertical, 1000);
+  pcl_pub            = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(output_steps, 1000);
+  horizontal_steps   = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_bounding_box, 1000);
+  hypothesis_pub     = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> > (step_maybe, 1000);
+  vertical_step_pub  = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(step_vertical, 1000);
 
   vertical = false;
 }
@@ -365,7 +365,7 @@ void staircase_detect::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud
     filter_counter++;
     if(filter_counter>=10)
       all_done = true;
-    if(verbose)
+    if(!verbose)
       ROS_ERROR("Filter limits:%f to %f", z-0.2, z);
     pass.setFilterLimits (z-0.2, z);
     pass.filter (*plane_cloud);
@@ -463,8 +463,10 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
     }
 
 
-//    pcl_pub.publish(step_cloud);
-//    ros::Duration(0.1).sleep();
+    ROS_INFO("Publishing planes now");
+
+    pcl_pub.publish(step_cloud);
+    ros::Duration(sleep_time).sleep();
 
     // If valid step, cluster steps together
     // Else filter the next 20cm section (in z-axis) and do over
@@ -538,7 +540,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
       cx_hull.reconstruct(*cloud_hull,polygon);
 
       //Print vertex coordinates
-      if(verbose)
+      if(!verbose)
       {
         for(size_t i=0; i<polygon[0].vertices.size();++i)
         {
@@ -773,7 +775,7 @@ bool staircase_detect::removeOutliers_vertical(pcl::PointCloud<pcl::PointXYZRGB>
       cx_hull.setComputeAreaVolume(true);
       cx_hull.reconstruct(*vertical_cloud_hull,polygon);
 
-      if(verbose)
+      if(!verbose)
       {
         for(size_t i=0; i<polygon[0].vertices.size();++i)
         {
@@ -820,7 +822,7 @@ int staircase_detect::getStairIndex(step_metrics &current_step, std::vector<stai
         ROS_WARN("Stair-%d Step-%d delta threshold=%f delta height=%f",i+1,j+1,diff,height);
         ROS_WARN("               ideal separation=%f actual separation=%f",ideal, actual);
       }
-      ros::Duration(sleep_time ).sleep();
+      ros::Duration(sleep_time).sleep();
       if(actual<0.05 && height <0.05)
       {
         return -2;
@@ -898,7 +900,7 @@ bool staircase_detect::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstP
     double min_x = 50, y_min_x= 50;
     double min_y = 50, x_min_y= 50;
 
-    if(verbose)
+    if(!verbose)
       ROS_ERROR("cluster size %d",cloud->width);
 
     for(it = cloud->begin(); it != cloud->end(); it++)
@@ -945,7 +947,7 @@ bool staircase_detect::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstP
     coords.push_back(y_max_x);
     coords.push_back(x_max_y);
     coords.push_back(max_y);
-    if(verbose)
+    if(!verbose)
     {
   //  ROS_INFO("Intended Coordinates of box (%f,%f)",coords[0],coords[1]);
 //    ROS_INFO("Intended Coordinates(%f,%f,%f)",min_x,y_min_x);
@@ -968,7 +970,7 @@ bool staircase_detect::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstP
     double min_z = 50, y_min_z= 50;
     double min_y = 50, z_min_y= 50;
 
-    if(verbose) ROS_ERROR("cluster size %d",cloud->width);
+    if(!verbose) ROS_ERROR("cluster size %d",cloud->width);
 
     for(it = cloud->begin(); it != cloud->end(); it++)
     {
@@ -1015,7 +1017,7 @@ bool staircase_detect::checkStep(const pcl::PointCloud<pcl::PointXYZRGB>::ConstP
     coords.push_back(y_max_z);
     coords.push_back(z_max_y);
     coords.push_back(max_y);
-    if(verbose)
+    if(!verbose)
     {
   //  ROS_INFO("Intended Coordinates of box (%f,%f)",coords[0],coords[1]);
     ROS_INFO("Intended Coordinates(%f,%f)",min_z,y_min_z);
@@ -1087,7 +1089,7 @@ bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<dou
   edge[5] = computeDistance(coord_2, coord_3);
 
   std::sort(edge, edge+6);
-  if(verbose)
+  if(!verbose)
   {
     ROS_INFO("Edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
 

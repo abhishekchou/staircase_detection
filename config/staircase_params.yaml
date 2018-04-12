@@ -1,4 +1,4 @@
-input_cloud_topic: "/map_nodelet/pointcloud"
+input_cloud_topic: "/mapping_nodelet/pointcloud"
 step_maybe_topic: "/staircase_detection/steps_centroid"
 output_steps_topic: "/staircase_detection/pointcloud/steps"
 step_horizontal_topic: "/staircase_detection/pointcloud/horizontal"
@@ -6,11 +6,11 @@ step_vertical_topic: "/staircase_detection/pointcloud/vertical"
 robot_pose_topic: "/robotcontrol/odometry"
 
 extract_bool: true
-verbose: false
-sleep_time: 0.0
+verbose: true
+sleep_time: 1.0
 
 #parameters are all in meters
-voxel_leaf: 0.04
+voxel_leaf: 0.1
 delta_angle: 0.087
 z_passthrough: 0.002
 distance_threshold: 0.12
@@ -19,6 +19,6 @@ acceptable_step_height: 0.3
 sensor_height_offset: 1.622
 sensor_plane_offset: 0.2
 
-perception_range: 8.0
+perception_range: 5.0
 
 
