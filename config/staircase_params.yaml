@@ -1,13 +1,13 @@
-input_cloud_topic: "/map_nodelet/pointcloud"
+input_cloud_topic: "/mapping_nodelet/pointcloud"
 step_maybe_topic: "/staircase_detection/steps_centroid"
-output_steps_topic: "/staircase_detection/pointcloud/steps"
-step_bounding_box_topic: "/staircase_detection/pointcloud/bounding_box"
-step_vertical_topic: "/staircase_detection/pointcloud/step_vertical"
+output_steps_topic: "/staircase_detection/steps"
+step_bounding_box_topic: "/staircase_detection/bounding_box"
+step_vertical_topic: "/staircase_detection/step_vertical"
 extract_bool: true
 verbose: false
 
 #parameters are all in centimeters
-voxel_leaf: 0.04
+voxel_leaf: 0.07
 delta_angle: 0.087
 z_passthrough: 0.002
 distance_threshold: 0.12
