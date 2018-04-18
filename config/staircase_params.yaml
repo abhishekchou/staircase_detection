@@ -9,21 +9,21 @@ robot_pose_topic: "/robotcontrol/odometry"
 
 extract_bool: true
 verbose: true
-sleep_time: 0.0
+sleep_time: 0.5
 
 #parameters are all in meters
-voxel_leaf: 0.1
+voxel_leaf: 0.08
 delta_angle: 0.087
 z_passthrough: 0.002
-distance_threshold: 0.02
+distance_threshold: 0.03
 cluster_tolerance: 0.1
 acceptable_step_height: 0.3
 sensor_height_offset: 1.622
 sensor_plane_offset: 0.2
 
-perception_range: 5.0
+perception_range: 6.0
 
 step_width: 1.0
-step_depth: 0.20
+step_depth: 0.10
 acceptable_step_height: 0.30
 

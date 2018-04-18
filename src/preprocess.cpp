@@ -316,19 +316,19 @@ void staircase_detect::preprocessScene()
   //////////////////////////////////////////////
   double x = robot_pose.pose.pose.position.x;
   double y = robot_pose.pose.pose.position.y;
-  double z = robot_pose.pose.pose.position.z;
+  double z = 0;
 
   dummy.x =x;dummy.y=y;dummy.z=z;
 
   cloud_copy->operator +=(*raw_cloud);
   pass.setInputCloud (cloud_copy);
   pass.setFilterFieldName ("z");
-  pass.setFilterLimits (z-max_range, z+max_range);
+  pass.setFilterLimits (z-max_range, z-0.12);
   pass.filter (*plane_cloud);
 
   pass.setInputCloud (plane_cloud);
   pass.setFilterFieldName ("x");
-  pass.setFilterLimits (x-max_range, x+max_range);
+  pass.setFilterLimits (x-1, x+max_range);
   pass.filter (*plane_cloud);
 
   pass.setInputCloud (plane_cloud);
@@ -336,10 +336,11 @@ void staircase_detect::preprocessScene()
   pass.setFilterLimits (y-max_range, y+max_range);
   pass.filter (*plane_cloud);
   raw_cloud->swap(*plane_cloud);
-  descriptor = "preprocess";
+  descriptor = "First Filter";
   input_filtered_pub.publish(raw_cloud);
 //  viewCloud(raw_cloud, dummy, descriptor);
 //  passThrough(raw_cloud, z-6.0, true);
+  ROS_INFO("Coming here from preprocessScene");
   passThrough(raw_cloud, z, true);
   return;
 }
@@ -365,22 +366,22 @@ void staircase_detect::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud
 //  pass.setFilterLimits (z-0.2, z);
 //  pass.filter (*plane_cloud);
 
-  z=z-0.05;
+//  z=z-0.05;
   do
   {
     filter_counter++;
     if(filter_counter>=10)
       all_done = true;
-    if(!verbose)
-      ROS_ERROR("Filter limits:%f to %f", z-0.15, z);
-    pass.setFilterLimits (z-0.15, z);
+    if(verbose)
+      ROS_ERROR("Filter limits:%f to %f", z-0.10, z);
+    pass.setFilterLimits (z-0.10, z);
     pass.filter (*plane_cloud);
-    z = z-0.15;
+    z = z-0.10;
   }while(plane_cloud->points.size()==0 && !all_done);
 
-  if(verbose)
+  if(!verbose)
     ROS_ERROR("Entered passthrough filter %d", plane_cloud->points.size());
-  descriptor = "pass throughing";
+  descriptor = "Pass throughing";
 //  viewCloud(plane_cloud, dummy, descriptor);
 
   /*
@@ -414,7 +415,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
   seg.setMethodType(pcl::SAC_RANSAC);
   seg.setMaxIterations(1000);
   seg.setAxis(Eigen::Vector3f(0,0,1)); //will look for normals parallel to z-axis ie planes parallel to the floor
-  seg.setEpsAngle(delta_angle);
+  seg.setEpsAngle(delta_angle*2);
   seg.setDistanceThreshold(distance_threshold);
 
   // Number of points in the scene to check and limit filtering of segmented planes
@@ -434,11 +435,17 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
     seg.setInputCloud(plane_cloud);
     seg.segment(*inliers, *coefficients);
 
+    ROS_WARN("Plane Equation: a%f + b%f +c%f +d%f =0",
+             coefficients->values[0],
+             coefficients->values[1],
+             coefficients->values[2],
+             coefficients->values[3]);
+
     if(verbose)
-      ROS_ERROR("Staircase: Segmented Plane - Inliers size =%d", (int) inliers->indices.size());
+      ROS_WARN("Staircase: Segmented Plane - Inliers size =%d", (int) inliers->indices.size());
     if(inliers->indices.size() ==0)
     {
-      ROS_ERROR("Staircase :No inliers, could not find a plane perpendicular to Z-axis");
+      ROS_WARN("Staircase :No inliers, could not find a plane perpendicular to Z-axis");
       break;
     }
 
@@ -448,7 +455,13 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
     extract.setNegative(!extract_bool);
     extract.filter(*temp_cloud);
     int temp_size = temp_cloud->points.size();
-    descriptor = "plane finding";
+    ROS_INFO("Publishing only horizontal planes now");
+
+    temp_cloud->header.frame_id = raw_cloud->header.frame_id;
+    raw_plane_pub.publish(temp_cloud);
+    ros::Duration(sleep_time).sleep();
+
+    //    descriptor = "Plane finding";
 //    viewCloud(temp_cloud, dummy, descriptor);
 
     //Find z-intercept of plane (ax+by+cz+d=0 => z = -d/c)
@@ -459,7 +472,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
 //      ROS_ERROR("Height: %f", height);
 
     //If plane is too big => floor/drivable, if plane too small => outlier
-    if(temp_size <1000 && temp_size>200)
+    if(temp_size <1000 && temp_size>100)
     {
       step_cloud->operator+=(*temp_cloud);
       if(verbose)
@@ -468,17 +481,16 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
 //      viewCloud(step_cloud, dummy, descriptor);
     }
 
-    ROS_INFO("Publishing only horizontal planes now");
-    raw_plane_pub.publish(step_cloud);
-    ros::Duration(sleep_time).sleep();
-
     // If valid step, cluster steps together
     // Else filter the next 20cm section (in z-axis) and do over
     if(step_cloud->points.size() !=0)
       removeOutliers(step_cloud, height);
     else
+    {
+      ROS_INFO("Coming here from findPlanes");
       passThrough(raw_cloud, current_height, true);
 //    ROS_ERROR("Plane Coeff a=%f b=%f c=%f d=%f", coefficients->values[0],coefficients->values[1],coefficients->values[2],coefficients->values[3] );
+    }
 
   }
   return;
@@ -586,7 +598,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
         }
         if (index == -1)
         {
-          if(verbose)
+          if(!verbose)
           {
             ROS_WARN("Adding new staircase");
 //            ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);
@@ -600,14 +612,14 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
         }
         if (index >=0)
         {
-          if(verbose){ROS_WARN("Adding to old staircase");
+          if(!verbose){ROS_WARN("Adding to old staircase");
           ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);}
           //add to staircase at index
           staircase[index].steps.push_back(temp_step);
           staircase[index].stair_cloud->operator +=(*cloud_cluster);
 //          ROS_WARN("Added to old staircase");
         }
-        if (verbose) ROS_WARN("Stairs number %d", staircase.size());
+        if (!verbose) ROS_WARN("Stairs number %d", staircase.size());
       }
 
       //Individual PointClouds with all steps in a staircase
@@ -694,7 +706,8 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
 
   //Passthrough start 5cm lower that where current plane was found
   //TODO add variable so this height can be based on whether looking up or down
-  passThrough(raw_cloud, height-0.05, true);
+  ROS_INFO("Coming here from removeOutliers");
+  passThrough(raw_cloud, height-0.15, true);
   return;
 }
 
@@ -751,7 +764,7 @@ bool staircase_detect::removeOutliers_vertical(pcl::PointCloud<pcl::PointXYZRGB>
   ec.setSearchMethod (tree);
   ec.setInputCloud (vertical_cloud);
   ec.extract (cluster_indices);
-  if(verbose) ROS_INFO("cluster indices size %d", cluster_indices.size());
+  if(!verbose) ROS_INFO("cluster indices size %d", cluster_indices.size());
   step_count = 0;
 
 
@@ -821,7 +834,7 @@ int staircase_detect::getStairIndex(step_metrics &current_step, std::vector<stai
       double ideal, actual, height, diff;
       diff = stepDistance(current_step, stairs[i].steps[j], ideal, actual);
       height = std::fabs(current_step.centroid[2]-stairs[i].steps[j].centroid[2]);
-      if(verbose)
+      if(!verbose)
       {
         ROS_WARN("Stair-%d Step-%d delta threshold=%f delta height=%f",i+1,j+1,diff,height);
         ROS_WARN("               ideal separation=%f actual separation=%f",ideal, actual);
@@ -1295,7 +1308,7 @@ bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
   // Create the segmentation object for the planar model and set all the parameters
   seg.setModelType (pcl::SACMODEL_NORMAL_PARALLEL_PLANE);
   seg.setAxis(axis);
-  seg.setEpsAngle(delta_angle*2);
+  seg.setEpsAngle(delta_angle*3);
   seg.setNormalDistanceWeight (0.11);
   seg.setMethodType (pcl::SAC_RANSAC);
   seg.setMaxIterations (1000);
