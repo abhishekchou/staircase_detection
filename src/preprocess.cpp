@@ -336,9 +336,11 @@ void staircase_detect::preprocessScene()
   pass.setFilterLimits (y-max_range, y+max_range);
   pass.filter (*plane_cloud);
   raw_cloud->swap(*plane_cloud);
-  descriptor = "First Filter";
-  input_filtered_pub.publish(raw_cloud);
+
+  descriptor = "Voxel Filter";
 //  viewCloud(raw_cloud, dummy, descriptor);
+
+  //  input_filtered_pub.publish(raw_cloud);
 //  passThrough(raw_cloud, z-6.0, true);
   ROS_INFO("Coming here from preprocessScene");
   passThrough(raw_cloud, z, true);
@@ -382,7 +384,7 @@ void staircase_detect::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud
   if(!verbose)
     ROS_ERROR("Entered passthrough filter %d", plane_cloud->points.size());
   descriptor = "Pass throughing";
-//  viewCloud(plane_cloud, dummy, descriptor);
+  viewCloud(plane_cloud, dummy, descriptor);
 
   /*
    * If bool variable is true, then looking for horizontal planes
@@ -406,17 +408,30 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
 //  float resolution = computeCloudResolution(raw_cloud);
 //  if(debug)ROS_INFO("Cloud Resolution: %f", resolution);
 
-  //Segmentation parameters for horizontal planes
-  pcl::SACSegmentation<pcl::PointXYZRGB> seg;
+  //Segmentation parameters for horizontal planes  
+  pcl::SACSegmentationFromNormals<pcl::PointXYZRGB, pcl::Normal> seg;
   pcl::ExtractIndices<pcl::PointXYZRGB> extract;
+  pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal> ne;
+  pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB> ());
+  pcl::PointCloud<pcl::Normal>::Ptr cloud_normals (new pcl::PointCloud<pcl::Normal>);
 
   //SACMODEL - Planes with normal parallel to given axis within angle threshold
-  seg.setModelType(pcl::SACMODEL_PERPENDICULAR_PLANE);
-  seg.setMethodType(pcl::SAC_RANSAC);
-  seg.setMaxIterations(1000);
-  seg.setAxis(Eigen::Vector3f(0,0,1)); //will look for normals parallel to z-axis ie planes parallel to the floor
-  seg.setEpsAngle(delta_angle*2);
-  seg.setDistanceThreshold(distance_threshold);
+//  seg.setModelType(pcl::SACMODEL_PERPENDICULAR_PLANE);
+//  seg.setMethodType(pcl::SAC_RANSAC);
+//  seg.setMaxIterations(1000);
+//  seg.setAxis(Eigen::Vector3f(0,0,1)); //will look for normals parallel to z-axis ie planes parallel to the floor
+//  seg.setEpsAngle(delta_angle*2);
+//  seg.setDistanceThreshold(distance_threshold);
+
+
+  //Trying segmentation with normals
+  seg.setModelType (pcl::SACMODEL_NORMAL_PARALLEL_PLANE);
+  seg.setAxis(Eigen::Vector3f(0,0,1));
+  seg.setEpsAngle(delta_angle*3);
+  seg.setNormalDistanceWeight (0.11);
+  seg.setMethodType (pcl::SAC_RANSAC);
+  seg.setMaxIterations (2000);
+  seg.setDistanceThreshold (distance_threshold);
 
   // Number of points in the scene to check and limit filtering of segmented planes
   int points_num = (int)plane_cloud->points.size();
@@ -425,15 +440,25 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
   //Segmentation and plane extraction
   while(plane_cloud->points.size() > 0.01*points_num)
   {
-    temp_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
-    step_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
-    step_cloud->header.frame_id = raw_cloud->header.frame_id;
-
     // Model paramters for plane fitting
     pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
     pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
+
+    // Estimate point normals
+    ne.setSearchMethod (tree);
+    ne.setInputCloud (plane_cloud);
+    ne.setRadiusSearch(0.1);
+    ne.compute (*cloud_normals);
+    seg.setInputNormals(cloud_normals);
+
+    descriptor = "Plane finding";
+//    viewCloud(plane_cloud, dummy, descriptor);
+
     seg.setInputCloud(plane_cloud);
     seg.segment(*inliers, *coefficients);
+    temp_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
+    step_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr (new pcl::PointCloud<pcl::PointXYZRGB>);
+    step_cloud->header.frame_id = raw_cloud->header.frame_id;
 
     ROS_WARN("Plane Equation: a%f + b%f +c%f +d%f =0",
              coefficients->values[0],
@@ -457,12 +482,9 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
     int temp_size = temp_cloud->points.size();
     ROS_INFO("Publishing only horizontal planes now");
 
-    temp_cloud->header.frame_id = raw_cloud->header.frame_id;
+    temp_cloud->header.frame_id = "world_corrected";
     raw_plane_pub.publish(temp_cloud);
-    ros::Duration(sleep_time).sleep();
-
-    //    descriptor = "Plane finding";
-//    viewCloud(temp_cloud, dummy, descriptor);
+//    ros::Duration(sleep_time).sleep();
 
     //Find z-intercept of plane (ax+by+cz+d=0 => z = -d/c)
     double c = coefficients->values[2];
@@ -516,9 +538,9 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
   //Euclidean clustering to identify false postives
   std::vector<pcl::PointIndices> cluster_indices;
   pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
-  ec.setClusterTolerance (cluster_tolerance); // 2cm
-  ec.setMinClusterSize (100);
-  ec.setMaxClusterSize (250000);
+  ec.setClusterTolerance (cluster_tolerance);
+  ec.setMinClusterSize (50);
+  ec.setMaxClusterSize (2000);
   ec.setSearchMethod (tree);
   ec.setInputCloud (cloud);
   ec.extract (cluster_indices);
@@ -567,6 +589,8 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
         }
       }
 
+      horizontal_steps.publish(cloud_hull);
+      ros::Duration(sleep_time).sleep();
       //Check step dimentsions and group into staircases
       if(checkStep(cloud_hull, step_params, false))
       {
@@ -591,7 +615,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
     (ii)  New Step in Existing Staircase, and
     (iii) New Staircase  */
         int index = getStairIndex(temp_step, staircase);
-        horizontal_steps.publish(cloud_cluster);
+//        horizontal_steps.publish(cloud_cluster);
         if (index == -2 && !verbose)
         {
 //          ROS_WARN("Adding to nothing, seen this before");
@@ -1649,7 +1673,7 @@ void staircase_detect::viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstP
   pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB> ());
   ne.setSearchMethod (tree);
   pcl::PointCloud<pcl::Normal>::Ptr normals (new pcl::PointCloud<pcl::Normal>);
-  ne.setRadiusSearch (0.1);
+  ne.setRadiusSearch (0.2);
   // Compute the features
   ne.compute (*normals);
 
