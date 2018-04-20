@@ -9,10 +9,10 @@ robot_pose_topic: "/robotcontrol/odometry"
 
 extract_bool: true
 verbose: true
-sleep_time: 1.5
+sleep_time: 1.0
 
 #parameters are all in meters
-voxel_leaf: 0.1
+voxel_leaf: 0.08
 delta_angle: 0.087
 z_passthrough: 0.002
 distance_threshold: 0.03
