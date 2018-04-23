@@ -23,6 +23,7 @@
 #include <pcl/common/io.h>
 #include <pcl/common/centroid.h>
 #include <pcl/common/angles.h>
+#include <pcl/common/pca.h>
 
 #include <pcl/point_cloud.h>
 #include <pcl/features/normal_3d.h>
@@ -130,6 +131,8 @@ public:
   double sensor_plane_offset;
   double sleep_time;
   double max_range;
+  double rotate_angle;
+  double normal_distance_threshold;
 
   geometry_msgs::Point dummy;
   nav_msgs::Odometry robot_pose;
@@ -152,8 +155,9 @@ public:
   std::vector<double> centroid_y;
   std::vector<double> centroid_z;
 
-  void preprocessScene();
   void removeWalls();
+  void rotateScene();
+  void preprocessScene();
 
   void viewCloud(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, geometry_msgs::Point msg, std::string descriptor);
   void poseCallback(const nav_msgs::Odometry::ConstPtr &msg);
@@ -175,11 +179,13 @@ public:
   bool validateSteps(const staircase_detection::centroid_list msg);
   bool removeOutliers_vertical(pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_cluster);
 
+
   double computeAngle(geometry_msgs::Point a, geometry_msgs::Point b);
   double stepDistance(step_metrics &a, step_metrics &b, double &ideal, double &actual);
   double computeDistance(std::vector<double> a, std::vector<double> b);
   double computeStepDepth(double step_depth, double prev_step_height, double first_step_height);
   double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
+  double pcaDecomposition();
 
   int getStairIndex(step_metrics &current_step, std::vector<stair> &stairs);
 
@@ -203,6 +209,8 @@ staircase_detect::staircase_detect() : nh_private("~")
   nh_private.getParam("robot_pose_topic", robot_pose_topic);
   nh_private.getParam("verbose", verbose);
 
+  nh_private.param("normal_distance_threshold", normal_distance_threshold, 0.1);
+  nh_private.param("rotate_angle", rotate_angle, 10.0);
   nh_private.param("delta_angle", delta_angle, 0.08);
   nh_private.param("cluster_tolerance", cluster_tolerance, 0.03);
   nh_private.param("z_passthrough", z_passthrough, 0.002);
@@ -317,14 +325,14 @@ void staircase_detect::preprocessScene()
   //////////////////////////////////////////////
   double x = robot_pose.pose.pose.position.x;
   double y = robot_pose.pose.pose.position.y;
-  double z = 0;
+  double z = robot_pose.pose.pose.position.z;
 
   dummy.x =x;dummy.y=y;dummy.z=z;
 
   cloud_copy->operator +=(*raw_cloud);
   pass.setInputCloud (cloud_copy);
   pass.setFilterFieldName ("z");
-  pass.setFilterLimits (z-max_range, z-0.12);
+  pass.setFilterLimits (z-max_range, z);
   pass.filter (*plane_cloud);
 
   pass.setInputCloud (plane_cloud);
@@ -341,13 +349,27 @@ void staircase_detect::preprocessScene()
   descriptor = "Voxel Filter";
 //  viewCloud(raw_cloud, dummy, descriptor);
 
-  input_filtered_pub.publish(raw_cloud);
+//  input_filtered_pub.publish(raw_cloud);
 //  passThrough(raw_cloud, z-6.0, true);
 //  ROS_INFO("Coming here from preprocessScene");
+  rotateScene();
   passThrough(raw_cloud, z, true);
   return;
 }
 
+void staircase_detect::rotateScene()
+{
+  double theta_temp;
+  theta_temp = rotate_angle*PI/180;
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr aligned_cloud (new pcl::PointCloud<pcl::PointXYZRGB> ());
+  Eigen::Affine3f rotate_x = Eigen::Affine3f::Identity();
+  rotate_x.rotate (Eigen::AngleAxisf (-theta_temp, Eigen::Vector3f::UnitX()));
+  pcl::transformPointCloud (*raw_cloud, *aligned_cloud, rotate_x);
+  aligned_cloud->header.frame_id = raw_cloud->header.frame_id;
+  input_filtered_pub.publish(aligned_cloud);
+  raw_cloud->swap(*aligned_cloud);
+  return;
+}
 /**
  * @brief Passthrough filter to operate only on specific areas of the pointcloud map, called iteratively
  * @param PointlCloud cloud
@@ -376,16 +398,16 @@ void staircase_detect::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud
     if(filter_counter>=10)
       all_done = true;
     if(verbose)
-      ROS_ERROR("Filter limits:%f to %f", z-0.25, z);
-    pass.setFilterLimits (z-0.25, z);
+      ROS_ERROR("Filter limits:%f to %f", z-0.10, z);
+    pass.setFilterLimits (z-0.10, z);
     pass.filter (*plane_cloud);
-    z = z-0.25;
+    z = z-0.10;
   }while(plane_cloud->points.size()==0 && !all_done);
 
   descriptor = "Pass throughing";
 //  viewCloud(plane_cloud, dummy, descriptor);
 
-  if(verbose)
+  if(!verbose)
     ROS_ERROR("Entered passthrough filter %d", plane_cloud->points.size());
 
   /*
@@ -429,8 +451,8 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
   //Trying segmentation with normals
   seg.setModelType (pcl::SACMODEL_NORMAL_PARALLEL_PLANE);
   seg.setAxis(Eigen::Vector3f(0,0,1));
-  seg.setEpsAngle(delta_angle*3);
-  seg.setNormalDistanceWeight (0.08);
+  seg.setEpsAngle(delta_angle);
+  seg.setNormalDistanceWeight (normal_distance_threshold);
   seg.setMethodType (pcl::SAC_RANSAC);
   seg.setMaxIterations (2000);
   seg.setDistanceThreshold (distance_threshold);
@@ -440,7 +462,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
   if(!verbose) ROS_INFO("Staircase: Initial Cloud Size= %d", points_num);
 
   //Segmentation and plane extraction
-  while(plane_cloud->points.size() > 0.01*points_num)
+  while(plane_cloud->points.size() > 0.001*points_num)
   {
     // Model paramters for plane fitting
     pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
@@ -449,7 +471,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
     // Estimate point normals
     ne.setSearchMethod (tree);
     ne.setInputCloud (plane_cloud);
-    ne.setRadiusSearch(0.1);
+    ne.setRadiusSearch(0.15);
     ne.compute (*cloud_normals);
     seg.setInputNormals(cloud_normals);
 
@@ -486,7 +508,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
 
     temp_cloud->header.frame_id = "world_corrected";
     raw_plane_pub.publish(temp_cloud);
-//    ros::Duration(sleep_time).sleep();
+    ros::Duration(sleep_time).sleep();
 
     //Find z-intercept of plane (ax+by+cz+d=0 => z = -d/c)
     double c = coefficients->values[2];
@@ -596,7 +618,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
 
       Eigen::Vector4f centroid;
       pcl::compute3DCentroid(*cloud_cluster, centroid);
-      ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);
+//      ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);
 
       //Check step dimentsions and group into staircases
       if(checkStep(cloud_hull, step_params, false))
@@ -735,8 +757,48 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
   //Passthrough start 5cm lower that where current plane was found
   //TODO add variable so this height can be based on whether looking up or down
 //  ROS_INFO("Coming here from removeOutliers");
-  passThrough(raw_cloud, height-0.30, true);
+  passThrough(raw_cloud, height-0.05, true);
   return;
+}
+
+/**
+ * @brief staircase_detect::pcaDecomposition
+ * @return
+ */
+double staircase_detect::pcaDecomposition(std::vector<double>* step_params)
+{
+  // Compute principal directions
+  Eigen::Vector4f pcaCentroid;
+  pcl::compute3DCentroid(*cloud_cluster, pcaCentroid);
+  Eigen::Matrix3f covariance;
+  computeCovarianceMatrixNormalized(*cloud_cluster, pcaCentroid, covariance);
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> eigen_solver(covariance, Eigen::ComputeEigenvectors);
+  Eigen::Matrix3f eigenVectorsPCA = eigen_solver.eigenvectors();
+  eigenVectorsPCA.col(2) = eigenVectorsPCA.col(0).cross(eigenVectorsPCA.col(1));
+
+  //      pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudPCAprojection (new pcl::PointCloud<pcl::PointXYZRGB>);
+  //      pcl::PCA<pcl::PointXYZRGB> pca;
+  //      pca.setInputCloud(cloud_cluster);
+  //      pca.project(*cloud_cluster, *cloudPCAprojection);
+  //      std::cerr << std::endl << "EigenVectors: " << pca.getEigenVectors() << std::endl;
+  //      std::cerr << std::endl << "EigenValues: " << pca.getEigenValues() << std::endl;
+
+  Eigen::Matrix4f projectionTransform(Eigen::Matrix4f::Identity());
+  projectionTransform.block<3,3>(0,0) = eigenVectorsPCA.transpose();
+  projectionTransform.block<3,1>(0,3) = -1.f * (projectionTransform.block<3,3>(0,0) * pcaCentroid.head<3>());
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudPointsProjected (new pcl::PointCloud<pcl::PointXYZRGB>);
+  pcl::transformPointCloud(*cloud_cluster, *cloudPointsProjected, projectionTransform);
+  // Get the minimum and maximum points of the transformed cloud.
+  pcl::PointXYZRGB minPoint, maxPoint;
+  pcl::getMinMax3D(*cloudPointsProjected, minPoint, maxPoint);
+  const Eigen::Vector3f meanDiagonal = 0.5f*(maxPoint.getVector3fMap() + minPoint.getVector3fMap());
+
+  ROS_INFO("min point (%f %f %f)", minPoint.x, minPoint.y, minPoint.z);
+  ROS_INFO("max point (%f %f %f)", maxPoint.x, maxPoint.y, maxPoint.z);
+  double x_diff = std::fabs(minPoint.x-maxPoint.x);
+  double y_diff = std::fabs(minPoint.y-maxPoint.y);
+  double z_diff = std::fabs(minPoint.z-maxPoint.z);
+
 }
 
 /**
@@ -1134,10 +1196,10 @@ bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<dou
   edge[5] = computeDistance(coord_2, coord_3);
 
   std::sort(edge, edge+6);
-  if(!verbose)
+  if(verbose)
   {
     ROS_INFO("Edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
-    ros::Duration(sleep_time).sleep();
+    ros::Duration(sleep_time/2).sleep();
 
 //    ROS_INFO("         edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
 //    if (vertical) ROS_INFO("vertical edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
@@ -1173,7 +1235,7 @@ bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<dou
         step_params->push_back(edge[0]);
         step_params->push_back(edge[2]);
         valid_step = true;
-        ROS_ERROR("This is okay");
+//        ROS_ERROR("This is okay");
       }
 //      if(edge[0] >= driving_depth)
 //      {
@@ -1199,7 +1261,7 @@ bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<dou
 
 
   if(valid_step == false)
-    ROS_ERROR("Not an okay step!");
+//    ROS_ERROR("Not an okay step!");
   return valid_step;
 }
 
