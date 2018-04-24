@@ -185,7 +185,7 @@ public:
   double computeDistance(std::vector<double> a, std::vector<double> b);
   double computeStepDepth(double step_depth, double prev_step_height, double first_step_height);
   double computeCloudResolution (const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
-  double pcaDecomposition();
+  double pcaDecomposition(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, std::vector<double>* step_params, bool vertical);
 
   int getStairIndex(step_metrics &current_step, std::vector<stair> &stairs);
 
@@ -398,10 +398,10 @@ void staircase_detect::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud
     if(filter_counter>=10)
       all_done = true;
     if(verbose)
-      ROS_ERROR("Filter limits:%f to %f", z-0.10, z);
-    pass.setFilterLimits (z-0.10, z);
+      ROS_ERROR("Filter limits:%f to %f", z-0.15, z);
+    pass.setFilterLimits (z-0.15, z);
     pass.filter (*plane_cloud);
-    z = z-0.10;
+    z = z-0.15;
   }while(plane_cloud->points.size()==0 && !all_done);
 
   descriptor = "Pass throughing";
@@ -490,8 +490,8 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
 //             coefficients->values[2],
 //             coefficients->values[3]);
 
-    if(!verbose)
-      ROS_WARN("Staircase: Segmented Plane - Inliers size =%d", (int) inliers->indices.size());
+    if(verbose)
+      ROS_WARN("Staircase: Segmented Planes - Totes Points=%d", (int) inliers->indices.size());
     if(inliers->indices.size() ==0)
     {
       ROS_WARN("Staircase :No inliers, could not find a plane perpendicular to Z-axis");
@@ -518,7 +518,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
 //      ROS_ERROR("Height: %f", height);
 
     //If plane is too big => floor/drivable, if plane too small => outlier
-    if(temp_size <1000 && temp_size>100)
+    if(temp_size <2000 && temp_size>100)
     {
       step_cloud->operator+=(*temp_cloud);
       if(verbose)
@@ -614,14 +614,13 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
       }
 
       horizontal_steps.publish(cloud_hull);
-      ros::Duration(sleep_time).sleep();
+//      ros::Duration(sleep_time).sleep();
 
       Eigen::Vector4f centroid;
       pcl::compute3DCentroid(*cloud_cluster, centroid);
-//      ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);
 
       //Check step dimentsions and group into staircases
-      if(checkStep(cloud_hull, step_params, false))
+      if(pcaDecomposition(cloud_cluster, step_params, false))
       {
 //        ROS_INFO("Will down some fun stair segregation stuff now");
         step_count++;
@@ -757,7 +756,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
   //Passthrough start 5cm lower that where current plane was found
   //TODO add variable so this height can be based on whether looking up or down
 //  ROS_INFO("Coming here from removeOutliers");
-  passThrough(raw_cloud, height-0.05, true);
+  passThrough(raw_cloud, height-0.1, true);
   return;
 }
 
@@ -765,39 +764,71 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
  * @brief staircase_detect::pcaDecomposition
  * @return
  */
-double staircase_detect::pcaDecomposition(std::vector<double>* step_params)
+double staircase_detect::pcaDecomposition(const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud, std::vector<double>* step_params, bool vertical)
 {
   // Compute principal directions
   Eigen::Vector4f pcaCentroid;
-  pcl::compute3DCentroid(*cloud_cluster, pcaCentroid);
+  pcl::compute3DCentroid(*cloud, pcaCentroid);
   Eigen::Matrix3f covariance;
-  computeCovarianceMatrixNormalized(*cloud_cluster, pcaCentroid, covariance);
+  computeCovarianceMatrixNormalized(*cloud, pcaCentroid, covariance);
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> eigen_solver(covariance, Eigen::ComputeEigenvectors);
   Eigen::Matrix3f eigenVectorsPCA = eigen_solver.eigenvectors();
   eigenVectorsPCA.col(2) = eigenVectorsPCA.col(0).cross(eigenVectorsPCA.col(1));
-
-  //      pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudPCAprojection (new pcl::PointCloud<pcl::PointXYZRGB>);
-  //      pcl::PCA<pcl::PointXYZRGB> pca;
-  //      pca.setInputCloud(cloud_cluster);
-  //      pca.project(*cloud_cluster, *cloudPCAprojection);
-  //      std::cerr << std::endl << "EigenVectors: " << pca.getEigenVectors() << std::endl;
-  //      std::cerr << std::endl << "EigenValues: " << pca.getEigenValues() << std::endl;
 
   Eigen::Matrix4f projectionTransform(Eigen::Matrix4f::Identity());
   projectionTransform.block<3,3>(0,0) = eigenVectorsPCA.transpose();
   projectionTransform.block<3,1>(0,3) = -1.f * (projectionTransform.block<3,3>(0,0) * pcaCentroid.head<3>());
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudPointsProjected (new pcl::PointCloud<pcl::PointXYZRGB>);
-  pcl::transformPointCloud(*cloud_cluster, *cloudPointsProjected, projectionTransform);
+  pcl::transformPointCloud(*cloud, *cloudPointsProjected, projectionTransform);
   // Get the minimum and maximum points of the transformed cloud.
   pcl::PointXYZRGB minPoint, maxPoint;
   pcl::getMinMax3D(*cloudPointsProjected, minPoint, maxPoint);
   const Eigen::Vector3f meanDiagonal = 0.5f*(maxPoint.getVector3fMap() + minPoint.getVector3fMap());
 
-  ROS_INFO("min point (%f %f %f)", minPoint.x, minPoint.y, minPoint.z);
-  ROS_INFO("max point (%f %f %f)", maxPoint.x, maxPoint.y, maxPoint.z);
-  double x_diff = std::fabs(minPoint.x-maxPoint.x);
-  double y_diff = std::fabs(minPoint.y-maxPoint.y);
-  double z_diff = std::fabs(minPoint.z-maxPoint.z);
+//  ROS_INFO("min point (%f %f %f)", minPoint.x, minPoint.y, minPoint.z);
+//  ROS_INFO("max point (%f %f %f)", maxPoint.x, maxPoint.y, maxPoint.z);
+
+  double step_dimensions[3];
+  step_dimensions[0]= std::fabs(minPoint.x-maxPoint.x);
+  step_dimensions[1]= std::fabs(minPoint.y-maxPoint.y);
+  step_dimensions[2]= std::fabs(minPoint.z-maxPoint.z);
+  std::sort(step_dimensions,step_dimensions+3);
+
+  ROS_INFO("Step Dimensions: depth= %f width= %f" , step_dimensions[1], step_dimensions[2]);
+  ros::Duration(sleep_time).sleep();
+
+  valid_step = false;
+  if (!vertical)
+  {
+    if(step_dimensions[1] != 0)
+    {
+      if(step_dimensions[1] >= step_depth && step_dimensions[1] <= step_depth*2 && step_dimensions[2] >= step_width)
+//      if(estimated_step_depth >= step_depth && edge[2] >= step_width)
+      {
+//        step_params->push_back(estimated_step_depth);
+        step_params->push_back(step_dimensions[1]);
+        step_params->push_back(step_dimensions[2]);
+        valid_step = true;
+        ROS_ERROR("This is okay");
+      }
+    }
+  }
+
+//  if (vertical)
+//  {
+//    double step_height = coord_2[0]-coord_0[0];
+////    ROS_WARN("Step Height: %f", step_height);
+//    if (step_height <= 0.5 && edge[5] >= step_width)
+//    {
+//      step_params->push_back(step_height);
+//      step_params->push_back(edge[5]);
+//      valid_step = true;
+//    }
+//  }
+
+  if(valid_step == false)
+    ROS_ERROR("Not an okay step!");
+  return valid_step;
 
 }
 
@@ -1171,43 +1202,43 @@ double staircase_detect::computeDistance(std::vector<double> a, std::vector<doub
  */
 bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<double>* step_params, double height)
 {
-  double edge[6];
+//  double edge[6];
   bool valid_step = false;
-  double driving_depth = 1.0;
+//  double driving_depth = 1.0;
 
-  std::vector<double> coord_0; // (x/zmin, y)
-  std::vector<double> coord_1; // (x/z, ymin)
-  std::vector<double> coord_2; // (x/zmax, y)
-  std::vector<double> coord_3; // (x/z, ymax)
-  coord_0.push_back(vertices[0]);
-  coord_0.push_back(vertices[1]);
-  coord_1.push_back(vertices[2]);
-  coord_1.push_back(vertices[3]);
-  coord_2.push_back(vertices[4]);
-  coord_2.push_back(vertices[5]);
-  coord_3.push_back(vertices[6]);
-  coord_3.push_back(vertices[7]);
+//  std::vector<double> coord_0; // (x/zmin, y)
+//  std::vector<double> coord_1; // (x/z, ymin)
+//  std::vector<double> coord_2; // (x/zmax, y)
+//  std::vector<double> coord_3; // (x/z, ymax)
+//  coord_0.push_back(vertices[0]);
+//  coord_0.push_back(vertices[1]);
+//  coord_1.push_back(vertices[2]);
+//  coord_1.push_back(vertices[3]);
+//  coord_2.push_back(vertices[4]);
+//  coord_2.push_back(vertices[5]);
+//  coord_3.push_back(vertices[6]);
+//  coord_3.push_back(vertices[7]);
 
-  edge[0] = computeDistance(coord_0, coord_1);
-  edge[1] = computeDistance(coord_0, coord_2);
-  edge[2] = computeDistance(coord_0, coord_3);
-  edge[3] = computeDistance(coord_1, coord_2);
-  edge[4] = computeDistance(coord_1, coord_3);
-  edge[5] = computeDistance(coord_2, coord_3);
+//  edge[0] = computeDistance(coord_0, coord_1);
+//  edge[1] = computeDistance(coord_0, coord_2);
+//  edge[2] = computeDistance(coord_0, coord_3);
+//  edge[3] = computeDistance(coord_1, coord_2);
+//  edge[4] = computeDistance(coord_1, coord_3);
+//  edge[5] = computeDistance(coord_2, coord_3);
 
-  std::sort(edge, edge+6);
-  if(verbose)
-  {
-    ROS_INFO("Edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
-    ros::Duration(sleep_time/2).sleep();
+//  std::sort(edge, edge+6);
+//  if(verbose)
+//  {
+//    ROS_INFO("Edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
+//    ros::Duration(sleep_time/2).sleep();
 
-//    ROS_INFO("         edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
-//    if (vertical) ROS_INFO("vertical edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
-//    ROS_INFO("Coordinates of box (%f,%f)",coord_0[0],coord_0[1]);
-//    ROS_INFO("Coordinates of box (%f,%f)",coord_1[0],coord_1[1]);
-//    ROS_INFO("Coordinates of box (%f,%f)",coord_2[0],coord_2[1]);
-//    ROS_INFO("Coordinates of box (%f,%f)",coord_3[0],coord_3[1]);
-  }
+////    ROS_INFO("         edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
+////    if (vertical) ROS_INFO("vertical edge length: %f %f %f %f %f %f", edge[0], edge[1], edge[2], edge[3], edge[4], edge[5]);
+////    ROS_INFO("Coordinates of box (%f,%f)",coord_0[0],coord_0[1]);
+////    ROS_INFO("Coordinates of box (%f,%f)",coord_1[0],coord_1[1]);
+////    ROS_INFO("Coordinates of box (%f,%f)",coord_2[0],coord_2[1]);
+////    ROS_INFO("Coordinates of box (%f,%f)",coord_3[0],coord_3[1]);
+//  }
 
 //  double x_length = std::abs(vertices[0]-vertices[2]);
 //  double y_length = std::abs(vertices[1]-vertices[3]);
@@ -1216,48 +1247,48 @@ bool staircase_detect::checkLength(std::vector<double> vertices, std::vector<dou
   // TODO fix the threshold value, should not be around 8m
   //Calculate visible step depth
 //  first_step_height = -0.87;
-  double x_mid = (coord_0[0]+coord_1[0]+coord_2[0]+coord_3[0])/4;
-  double y_mid = (coord_0[1]+coord_1[1]+coord_2[1]+coord_3[1])/4;
-  double non_visible_step_depth = computeStepDepth(x_mid, y_mid, height);
-  double estimated_step_depth = non_visible_step_depth + edge[0];
+//  double x_mid = (coord_0[0]+coord_1[0]+coord_2[0]+coord_3[0])/4;
+//  double y_mid = (coord_0[1]+coord_1[1]+coord_2[1]+coord_3[1])/4;
+//  double non_visible_step_depth = computeStepDepth(x_mid, y_mid, height);
+//  double estimated_step_depth = non_visible_step_depth + edge[0];
 //  ROS_INFO("Non Visible Depth: %f",non_visible_step_depth);
 //  ROS_WARN("Full estimated Step Depth: %f", estimated_step_depth);
 
 
-  if (!vertical)
-  {
-    if(edge[0] != 0)
-    {
-      if(edge[0] >= step_depth && edge[0] <= step_width && edge[2] >= step_width)
-//      if(estimated_step_depth >= step_depth && edge[2] >= step_width)
-      {
-//        step_params->push_back(estimated_step_depth);
-        step_params->push_back(edge[0]);
-        step_params->push_back(edge[2]);
-        valid_step = true;
-//        ROS_ERROR("This is okay");
-      }
-//      if(edge[0] >= driving_depth)
+//  if (!vertical)
+//  {
+//    if(edge[0] != 0)
+//    {
+//      if(edge[0] >= step_depth && edge[0] <= step_width && edge[2] >= step_width)
+////      if(estimated_step_depth >= step_depth && edge[2] >= step_width)
 //      {
-//  //      step_params->push_back(edge[0]);
-//  //      step_params->push_back(edge[2]);
-//        valid_step = false;
-////        ROS_ERROR("This is drivable");
+////        step_params->push_back(estimated_step_depth);
+//        step_params->push_back(edge[0]);
+//        step_params->push_back(edge[2]);
+//        valid_step = true;
+////        ROS_ERROR("This is okay");
 //      }
-    }
-  }
+////      if(edge[0] >= driving_depth)
+////      {
+////  //      step_params->push_back(edge[0]);
+////  //      step_params->push_back(edge[2]);
+////        valid_step = false;
+//////        ROS_ERROR("This is drivable");
+////      }
+//    }
+//  }
 
-  if (vertical)
-  {
-    double step_height = coord_2[0]-coord_0[0];
-//    ROS_WARN("Step Height: %f", step_height);
-    if (step_height <= 0.5 && edge[5] >= step_width)
-    {
-      step_params->push_back(step_height);
-      step_params->push_back(edge[5]);
-      valid_step = true;
-    }
-  }
+//  if (vertical)
+//  {
+//    double step_height = coord_2[0]-coord_0[0];
+////    ROS_WARN("Step Height: %f", step_height);
+//    if (step_height <= 0.5 && edge[5] >= step_width)
+//    {
+//      step_params->push_back(step_height);
+//      step_params->push_back(edge[5]);
+//      valid_step = true;
+//    }
+//  }
 
 
   if(valid_step == false)
