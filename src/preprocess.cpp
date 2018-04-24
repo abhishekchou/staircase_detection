@@ -397,11 +397,11 @@ void staircase_detect::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud
     filter_counter++;
     if(filter_counter>=10)
       all_done = true;
-    if(verbose)
-      ROS_ERROR("Filter limits:%f to %f", z-0.15, z);
-    pass.setFilterLimits (z-0.15, z);
+    if(!verbose)
+      ROS_ERROR("Filter limits:%f to %f", z-0.10, z);
+    pass.setFilterLimits (z-0.10, z);
     pass.filter (*plane_cloud);
-    z = z-0.15;
+    z = z-0.10;
   }while(plane_cloud->points.size()==0 && !all_done);
 
   descriptor = "Pass throughing";
@@ -490,7 +490,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
 //             coefficients->values[2],
 //             coefficients->values[3]);
 
-    if(verbose)
+    if(!verbose)
       ROS_WARN("Staircase: Segmented Planes - Totes Points=%d", (int) inliers->indices.size());
     if(inliers->indices.size() ==0)
     {
@@ -568,7 +568,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
   ec.setSearchMethod (tree);
   ec.setInputCloud (cloud);
   ec.extract (cluster_indices);
-  if(verbose) ROS_INFO("Num of clusters: %d", cluster_indices.size());
+  if(!verbose) ROS_INFO("Num of clusters: %d", cluster_indices.size());
   clustering_iteration++;
   step_count = 0;
 
@@ -640,14 +640,13 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
     (ii)  New Step in Existing Staircase, and
     (iii) New Staircase  */
         int index = getStairIndex(temp_step, staircase);
-//        horizontal_steps.publish(cloud_cluster);
-        if (index == -2 && !verbose)
+        if (index == -2 && verbose)
         {
-//          ROS_WARN("Adding to nothing, seen this before");
+          ROS_WARN("Adding to nothing, seen this before");
         }
         if (index == -1)
         {
-          if(!verbose)
+          if(verbose)
           {
             ROS_WARN("Adding new staircase");
 //            ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);
@@ -661,14 +660,14 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
         }
         if (index >=0)
         {
-          if(!verbose){ROS_WARN("Adding to old staircase");
+          if(verbose){ROS_WARN("Adding to old staircase");
           ROS_WARN("x=%f y=%f z=%f",centroid[0],centroid[1],centroid[2]);}
           //add to staircase at index
           staircase[index].steps.push_back(temp_step);
           staircase[index].stair_cloud->operator +=(*cloud_cluster);
 //          ROS_WARN("Added to old staircase");
         }
-        if (!verbose) ROS_WARN("Stairs number %d", staircase.size());
+        if (verbose) ROS_WARN("Stairs number %d", staircase.size());
       }
 
       //Individual PointClouds with all steps in a staircase
@@ -756,7 +755,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
   //Passthrough start 5cm lower that where current plane was found
   //TODO add variable so this height can be based on whether looking up or down
 //  ROS_INFO("Coming here from removeOutliers");
-  passThrough(raw_cloud, height-0.1, true);
+  passThrough(raw_cloud, height-0.05, true);
   return;
 }
 
@@ -952,30 +951,33 @@ int staircase_detect::getStairIndex(step_metrics &current_step, std::vector<stai
   {
     for(size_t j=0;j<stairs[i].steps.size();++j)
     {
-      double ideal, actual, height, diff;
-      diff = stepDistance(current_step, stairs[i].steps[j], ideal, actual);
+      double ideal, actual, height, delta;
+      delta = stepDistance(current_step, stairs[i].steps[j], ideal, actual);
       height = std::fabs(current_step.centroid[2]-stairs[i].steps[j].centroid[2]);
-      if(!verbose)
+      if(verbose)
       {
-        ROS_WARN("Stair-%d Step-%d delta threshold=%f delta height=%f",i+1,j+1,diff,height);
-        ROS_WARN("               ideal separation=%f actual separation=%f",ideal, actual);
+        ROS_WARN("Current vs Stair-%d,Step-%d dist=%f height=%f",i+1,j+1,delta,height);
+        ROS_WARN("               ideal=%f actual=%f",ideal, actual);
+        ROS_WARN("               ideal-actual   =%f",ideal-actual);
+
       }
       ros::Duration(sleep_time).sleep();
       if(actual<0.05 && height <0.05)
       {
+        step_height = height;
         return -2;
       }
       
       // within 15cm of one step separation of an existing step
       // and height is one step apart
-      if( diff < 0.15 && height<0.3 && height>0.08)
+      if( delta < 0.2 && height<0.3 && height>0.05)
       {
         return i;
       }
 
       // within two step separation of an existing step and
       // height is two steps apart
-      if(std::fabs(diff-ideal)<0.15 && std::fabs(height-0.6)<0.15)
+      if(std::fabs(delta-ideal)<0.2 && std::fabs(height-2*step_height)<0.05)
       {
         return i;
       }
@@ -995,22 +997,22 @@ int staircase_detect::getStairIndex(step_metrics &current_step, std::vector<stai
  */
 double staircase_detect::stepDistance(step_metrics &current, step_metrics &previous, double &ideal, double &actual)
 {
-  double x_diff = std::abs(current.centroid[0]-previous.centroid[0]);
-  double y_diff = std::abs(current.centroid[1]-previous.centroid[1]);
+  double x_diff = std::fabs(current.centroid[0]-previous.centroid[0]);
+  double y_diff = std::fabs(current.centroid[1]-previous.centroid[1]);
 
   double height_diff = std::fabs(current.centroid[2]-previous.centroid[2]);
   double planar_diff = std::sqrt(std::pow(x_diff,2)+ std::pow(y_diff,2) );
 
   double distance = std::sqrt (std::pow(planar_diff,2) + std::pow(height_diff,2) );
-  double ideal_step_separtion = std::sqrt (std::pow(current.depth,2) + std::pow(step_height,2) );
+  double ideal_step_separtion = std::sqrt (std::pow(current.depth,2) + std::pow(height_diff,2) );
 
-  double threshold =std::fabs(distance-ideal_step_separtion);
+  double delta =std::fabs(distance-ideal_step_separtion);
 //  ROS_ERROR("actual %f", distance);
 //  ROS_ERROR("ideal %f", ideal_step_separtion);
 //  ROS_ERROR("threshold distance %f", threshold);
   ideal = ideal_step_separtion;
   actual = distance;
-  return threshold;
+  return delta;
 }
 
 /**
