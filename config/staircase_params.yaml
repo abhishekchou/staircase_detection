@@ -9,28 +9,28 @@ robot_pose_topic: "/robotcontrol/odometry"
 
 extract_bool: true
 verbose: true
-sleep_time: 0.0
+sleep_time: 1.0
 
 #parameters are all in meters
 voxel_leaf: 0.08
 delta_angle: 0.087
 z_passthrough: 0.002
 distance_threshold: 0.12
-normal_distance_threshold: 0.08
-cluster_tolerance: 0.12
-acceptable_step_height: 0.3
+normal_distance_threshold: 0.18
+cluster_tolerance: 0.1
+
 sensor_height_offset: 1.622
 sensor_plane_offset: 0.2
 
 perception_range: 6.0
 
 step_width: 2.0
-step_depth: 0.35
+step_depth: 0.2
 acceptable_step_height: 0.30
 
 
 #rotate angle to align cloud to world (in deg)
-rotate_angle: -2.0
+rotate_angle: 0.0
 
 
 #museum down

@@ -357,6 +357,10 @@ void staircase_detect::preprocessScene()
   return;
 }
 
+/**
+ * @brief Rotate scene to match real world if robot is not standing parallel to ground.
+ * @param Angle provided from the config (yaml) file at launch
+ */
 void staircase_detect::rotateScene()
 {
   double theta_temp;
@@ -964,7 +968,6 @@ int staircase_detect::getStairIndex(step_metrics &current_step, std::vector<stai
       ros::Duration(sleep_time).sleep();
       if(actual<0.05 && height <0.05)
       {
-        step_height = height;
         return -2;
       }
       
@@ -972,6 +975,7 @@ int staircase_detect::getStairIndex(step_metrics &current_step, std::vector<stai
       // and height is one step apart
       if( delta < 0.2 && height<0.3 && height>0.05)
       {
+        step_height = height;
         return i;
       }
 
@@ -979,6 +983,7 @@ int staircase_detect::getStairIndex(step_metrics &current_step, std::vector<stai
       // height is two steps apart
       if(std::fabs(delta-ideal)<0.2 && std::fabs(height-2*step_height)<0.05)
       {
+        step_height = height/2;
         return i;
       }
     }
