@@ -332,7 +332,7 @@ void staircase_detect::preprocessScene()
   cloud_copy->operator +=(*raw_cloud);
   pass.setInputCloud (cloud_copy);
   pass.setFilterFieldName ("z");
-  pass.setFilterLimits (z-max_range, z);
+  pass.setFilterLimits (z-max_range/3, z+max_range/3);
   pass.filter (*plane_cloud);
 
   pass.setInputCloud (plane_cloud);
@@ -349,11 +349,11 @@ void staircase_detect::preprocessScene()
   descriptor = "Voxel Filter";
 //  viewCloud(raw_cloud, dummy, descriptor);
 
-//  input_filtered_pub.publish(raw_cloud);
+  input_filtered_pub.publish(raw_cloud);
 //  passThrough(raw_cloud, z-6.0, true);
 //  ROS_INFO("Coming here from preprocessScene");
   rotateScene();
-  passThrough(raw_cloud, z, true);
+  passThrough(raw_cloud, z+max_range/3, true);
   return;
 }
 
@@ -399,19 +399,19 @@ void staircase_detect::passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud
   do
   {
     filter_counter++;
-    if(filter_counter>=10)
+    if(filter_counter>=(max_range*10))
       all_done = true;
-    if(!verbose)
+    if(verbose)
       ROS_ERROR("Filter limits:%f to %f", z-0.10, z);
     pass.setFilterLimits (z-0.10, z);
     pass.filter (*plane_cloud);
     z = z-0.10;
-  }while(plane_cloud->points.size()==0 && !all_done);
+  }while(plane_cloud->points.size()<100 && !all_done);
 
   descriptor = "Pass throughing";
 //  viewCloud(plane_cloud, dummy, descriptor);
 
-  if(!verbose)
+  if(verbose)
     ROS_ERROR("Entered passthrough filter %d", plane_cloud->points.size());
 
   /*
@@ -494,7 +494,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
 //             coefficients->values[2],
 //             coefficients->values[3]);
 
-    if(!verbose)
+    if(verbose)
       ROS_WARN("Staircase: Segmented Planes - Totes Points=%d", (int) inliers->indices.size());
     if(inliers->indices.size() ==0)
     {
@@ -508,8 +508,8 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
     extract.setNegative(!extract_bool);
     extract.filter(*temp_cloud);
     int temp_size = temp_cloud->points.size();
-//    ROS_INFO("Publishing only horizontal planes now");
 
+    ROS_INFO("Publishing only horizontal planes now");
     temp_cloud->header.frame_id = "world_corrected";
     raw_plane_pub.publish(temp_cloud);
     ros::Duration(sleep_time).sleep();
@@ -543,6 +543,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
     }
 
   }
+  passThrough(raw_cloud, current_height, true);
   return;
 }
 
@@ -710,6 +711,8 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
       }
       //publish horizontal steps cloud
       pcl_pub.publish(horizontal_steps_cloud);
+      double resolution = computeCloudResolution(horizontal_steps_cloud);
+      ROS_WARN("Cloud Resolution: %f", resolution);
     }
   }
   //Check if robot on(behind) staircase or in front
@@ -1402,26 +1405,29 @@ bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
   pass.setFilterFieldName ("x");
   pass.setFilterLimits (visualise_rotation.x-1.0, visualise_rotation.x+5);
   pass.filter (*filtered_cloud);
-//  viewCloud(filtered_cloud, visualise_rotation);
+//  viewCloud(filtered_cloud, visualise_rotation, "Rotate to look for verticals");
   pass.setInputCloud (filtered_cloud);
   pass.setFilterFieldName("y");
-  pass.setFilterLimits(visualise_rotation.y-1.0,visualise_rotation.y+1.0);
+  pass.setFilterLimits(visualise_rotation.y-1.5,visualise_rotation.y+1.5);
   pass.filter (*filtered_cloud);
 //  viewCloud(filtered_cloud, visualise_rotation);
-  double ground_height;
+//  double ground_height;
   pass.setInputCloud (filtered_cloud);
   pass.setFilterFieldName("z");
   if(std::fabs(a.z) > std::fabs(b.z))
   {
-    pass.setFilterLimits(b.z-0.4, b.z+2.0);
-    ground_height = b.z-0.5;
+    pass.setFilterLimits(b.z-2.0, b.z+2.0);
+//    ground_height = b.z-0.5;
   }
   else
   {
-    pass.setFilterLimits(a.z-0.4, a.z+2.0);
-    ground_height = a.z-0.5;
+    pass.setFilterLimits(a.z-2.0, a.z+2.0);
+//    ground_height = a.z-0.5;
   }
   pass.filter (*filtered_cloud);
+//  viewCloud(filtered_cloud, visualise_rotation, "Rotate to look for verticals");
+
+  filtered_cloud->header.frame_id = "world_corrected";
   hypothesis_pub.publish(filtered_cloud); //re-rotated filtered scene
 
   // Segmentation of vertical planes using surface normals
@@ -1445,7 +1451,7 @@ bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
   // Number of points in the scene to limit segmenation and filtering operation
   int points_num = (int)filtered_cloud->points.size();
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_step_cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
-  vertical_step_cloud->header.frame_id = raw_cloud->header.frame_id;
+  vertical_step_cloud->header.frame_id = "world_corrected";
 
   //Segmentation and plane extraction
   while(filtered_cloud->points.size() > 0.1*points_num)
@@ -1487,31 +1493,36 @@ bool staircase_detect::validateSteps(staircase_detection::centroid_list msg)
     temp_cloud->swap(*temp_cloud2);
     int temp_size = (int) temp_cloud->points.size();
 
-    // Undo rotation of the staircase pointcloud
-    Eigen::Affine3f rotate_back_z = Eigen::Affine3f::Identity();
-    rotate_back_z.rotate (Eigen::AngleAxisf (theta, Eigen::Vector3f::UnitZ()));
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr re_aligned_cloud (new pcl::PointCloud<pcl::PointXYZRGB> ());
-    pcl::transformPointCloud (*temp_cloud, *re_aligned_cloud, rotate_back_z);
-    temp_cloud->swap(*re_aligned_cloud);
-
-    geometry_msgs::Point cent;
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_planes (new pcl::PointCloud<pcl::PointXYZRGB> ());
-
-    //Cluster and remove outliers, check if dimensions are within bounds of prescribed step dimensions
-    if (removeOutliers_vertical(temp_cloud, vertical_planes))
+    if(temp_size >= 100 && temp_size <=2000)
     {
-      if (normalDotProduct(coefficients, axis) && temp_size >100)
+      // Undo rotation of the staircase pointcloud
+      Eigen::Affine3f rotate_back_z = Eigen::Affine3f::Identity();
+      rotate_back_z.rotate (Eigen::AngleAxisf (theta, Eigen::Vector3f::UnitZ()));
+      pcl::PointCloud<pcl::PointXYZRGB>::Ptr re_aligned_cloud (new pcl::PointCloud<pcl::PointXYZRGB> ());
+      pcl::transformPointCloud (*temp_cloud, *re_aligned_cloud, rotate_back_z);
+      temp_cloud->swap(*re_aligned_cloud);
+      temp_cloud->header.frame_id = "world_corrected";
+      vertical_step_pub.publish(temp_cloud);
+
+      geometry_msgs::Point cent;
+      pcl::PointCloud<pcl::PointXYZRGB>::Ptr vertical_planes (new pcl::PointCloud<pcl::PointXYZRGB> ());
+
+      //Cluster and remove outliers, check if dimensions are within bounds of prescribed step dimensions
+      if (removeOutliers_vertical(temp_cloud, vertical_planes))
       {
-        vertical_step_cloud->operator+=(*vertical_planes);
-        Eigen::Vector4f centroid;
-        pcl::compute3DCentroid(*temp_cloud, centroid);
-        cent.x = centroid[0];
-        cent.y = centroid[1];
-        cent.z = centroid[2];
-        vertical_centroid_vector.push_back(cent);
-//        ROS_ERROR("VERTICAAAALLLLLL %d", temp_size);
-        vertical_step_pub.publish(vertical_step_cloud);
-        is_vertical = true;
+        if (normalDotProduct(coefficients, axis))
+        {
+          vertical_step_cloud->operator+=(*vertical_planes);
+          Eigen::Vector4f centroid;
+          pcl::compute3DCentroid(*temp_cloud, centroid);
+          cent.x = centroid[0];
+          cent.y = centroid[1];
+          cent.z = centroid[2];
+          vertical_centroid_vector.push_back(cent);
+          ROS_ERROR("VERTICAAAALLLLLL %d", temp_size);
+//          vertical_step_pub.publish(vertical_step_cloud);
+          is_vertical = true;
+        }
       }
     }
     //All points except those in the found plane
@@ -1558,12 +1569,12 @@ bool staircase_detect::robotInFront(staircase_detection::centroid_list msg)
   //Lower Step is closer to robot => robot facing front of stair
   if(d_lower<d_higher)
   {
-//    ROS_ERROR("Returning TRUE: Vertical planes visible");
+    ROS_ERROR("Returning TRUE: Vertical planes visible");
     return true;
   }
   else
   {
-//    ROS_ERROR("Returning FALSE: Vertical planes visible");
+    ROS_ERROR("Returning FALSE: Vertical planes NOT visible");
     return false;
   }
 }
