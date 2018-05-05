@@ -351,7 +351,7 @@ void staircase_detect::preprocessScene()
 
   input_filtered_pub.publish(raw_cloud);
 //  passThrough(raw_cloud, z-6.0, true);
-//  ROS_INFO("Coming here from preprocessScene");
+  ROS_INFO("Coming here from preprocessScene");
   rotateScene();
   passThrough(raw_cloud, z+max_range/3, true);
   return;
@@ -518,11 +518,18 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
     double c = coefficients->values[2];
     double d = coefficients->values[3];
     double height = (-d/c);
+    for(pcl::PointCloud<pcl::PointXYZRGB>::const_iterator it = temp_cloud->begin();
+        it != temp_cloud->end();
+        ++it)
+    {
+      height += it->z;
+    }
+    height = height/temp_size;
 //    if(verbose)
 //      ROS_ERROR("Height: %f", height);
 
     //If plane is too big => floor/drivable, if plane too small => outlier
-    if(temp_size <2000 && temp_size>100)
+    if(temp_size <5000 && temp_size>100)
     {
       step_cloud->operator+=(*temp_cloud);
       if(verbose)
@@ -537,7 +544,7 @@ void staircase_detect::findHorizontalPlanes(const pcl::PointCloud<pcl::PointXYZR
       removeOutliers(step_cloud, height);
     else
     {
-//      ROS_INFO("Coming here from findPlanes");
+      ROS_INFO("Coming here from findPlanes");
       passThrough(raw_cloud, current_height, true);
 //    ROS_ERROR("Plane Coeff a=%f b=%f c=%f d=%f", coefficients->values[0],coefficients->values[1],coefficients->values[2],coefficients->values[3] );
     }
@@ -569,7 +576,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
   pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
   ec.setClusterTolerance (cluster_tolerance);
   ec.setMinClusterSize (50);
-  ec.setMaxClusterSize (2000);
+  ec.setMaxClusterSize (1000);
   ec.setSearchMethod (tree);
   ec.setInputCloud (cloud);
   ec.extract (cluster_indices);
@@ -595,9 +602,13 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
       cloud_cluster->header.frame_id = raw_cloud->header.frame_id;
 
       //Hull clustered points into new pointcloud
-      for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); ++pit)
+      if(cloud_cluster->points.size() <= 1000)
       {
-        cloud_cluster->points.push_back (cloud->points[*pit]);
+        ROS_INFO("This cluster is more than 1000 points");
+        for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); ++pit)
+        {
+          cloud_cluster->points.push_back (cloud->points[*pit]);
+        }
       }
 
       //creating Convex hull around the cluster
@@ -761,7 +772,7 @@ void staircase_detect::removeOutliers(const pcl::PointCloud<pcl::PointXYZRGB>::C
 
   //Passthrough start 5cm lower that where current plane was found
   //TODO add variable so this height can be based on whether looking up or down
-//  ROS_INFO("Coming here from removeOutliers");
+  ROS_INFO("Coming here from removeOutliers");
   passThrough(raw_cloud, height-0.05, true);
   return;
 }
@@ -808,8 +819,9 @@ double staircase_detect::pcaDecomposition(const pcl::PointCloud<pcl::PointXYZRGB
   {
     if(step_dimensions[1] != 0)
     {
-      if(step_dimensions[1] >= step_depth && step_dimensions[1] <= step_depth*2 && step_dimensions[2] >= step_width)
-//      if(estimated_step_depth >= step_depth && edge[2] >= step_width)
+      if(step_dimensions[1] >= step_depth &&
+         step_dimensions[1] <= step_depth*4 &&
+         step_dimensions[2] >= step_width)
       {
 //        step_params->push_back(estimated_step_depth);
         step_params->push_back(step_dimensions[1]);
@@ -1748,7 +1760,7 @@ double staircase_detect::computeCloudResolution (const pcl::PointCloud<pcl::Poin
       continue;
     }
     //Considering the second neighbor since the first is the point itself.
-    nres = tree.nearestKSearch (i, 2, indices, sqr_distances);
+    nres = tree.nearestKSearch (i, 4, indices, sqr_distances);
     if (nres == 2)
     {
       res += std::sqrt (sqr_distances[1]);

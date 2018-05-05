@@ -9,15 +9,15 @@ robot_pose_topic: "/robotcontrol/odometry"
 
 extract_bool: true
 verbose: true
-sleep_time: 1.0
+sleep_time: 0.5
 
 #parameters are all in meters
 voxel_leaf: 0.08
 delta_angle: 0.087
 z_passthrough: 0.002
-distance_threshold: 0.16
-normal_distance_threshold: 0.2
-cluster_tolerance: 0.1
+distance_threshold: 0.14
+normal_distance_threshold: 0.12
+cluster_tolerance: 0.16
 
 sensor_height_offset: 1.622
 sensor_plane_offset: 0.2
@@ -25,31 +25,37 @@ sensor_plane_offset: 0.2
 perception_range: 6.0
 
 step_width: 1.0
-step_depth: 0.3
+step_depth: 0.2
 acceptable_step_height: 0.30
 
 
 #rotate angle to align cloud to world (in deg)
 rotate_angle: -2.0
 
+#museum front
+#rotate_angle: -2.0
+#distance_thre: 0.18
+#normal_distnace: 0.1
+#cluster_tol: 0.1
 
 #museum down
 #rotate angle =-2.0
-#cluster = 0.12
+#cluster_tolerance = 0.12
 #distance_threshold: 0.06
 
 #tek14 behind
 #rotate_angle: 0.0
-#step_depth:0.35
-#distance_threshold: 0.12
 #cluster_tolerance: 0.12
+#distance_threshold: 0.12
+#step_depth:0.35
 #normal_distance_threshold: 0.08
 
 #tek14_front
-#passthrough for 15cm instead of 10cm
 #rotate_angle: -1.0
-#normal_distance_threshold: 0.18
 #distance_threshold: 0.12
+#passthrough for 15cm instead of 10cm
+#normal_distance_threshold: 0.18
 
 #lappis_3
+#rotate_angle: -2.0
 #distance_threshold: 0.1
