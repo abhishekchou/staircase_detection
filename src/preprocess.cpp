@@ -332,7 +332,7 @@ void staircase_detect::preprocessScene()
   cloud_copy->operator +=(*raw_cloud);
   pass.setInputCloud (cloud_copy);
   pass.setFilterFieldName ("z");
-  pass.setFilterLimits (z-max_range/3, z+max_range/3);
+  pass.setFilterLimits (z-max_range/2, z+max_range/2);
   pass.filter (*plane_cloud);
 
   pass.setInputCloud (plane_cloud);
@@ -342,7 +342,7 @@ void staircase_detect::preprocessScene()
 
   pass.setInputCloud (plane_cloud);
   pass.setFilterFieldName ("y");
-  pass.setFilterLimits (y-max_range, y+max_range);
+  pass.setFilterLimits (y-max_range/3, y+max_range/3);
   pass.filter (*plane_cloud);
   raw_cloud->swap(*plane_cloud);
 
